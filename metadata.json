@@ -1,0 +1,10 @@
+{
+  "name": "Remix: Hourglass",
+  "description": "A mobile-first hourly planner and PWA calendar with 24-hour timeline and custom push notifications.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

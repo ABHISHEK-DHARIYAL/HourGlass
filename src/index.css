@@ -1,0 +1,50 @@
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,100..900;1,9..144,100..900&family=IBM+Plex+Mono:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700;800&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-serif: "Fraunces", Georgia, serif;
+  --font-sans: "Inter", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", monospace;
+
+  --color-ledger-dark: #0d1a13;
+  --color-ledger-paper: #f4efe2;
+  --color-ledger-paper-dim: #d5cdb8;
+  --color-ledger-coral: #e56b55;
+  --color-ledger-gold: #d4af37;
+  --color-ledger-slate: #182820;
+  --color-ledger-slate-light: #263d32;
+  --color-ledger-line: #22372d;
+}
+
+:root.theme-paper {
+  --color-ledger-dark: #faf7f0;
+  --color-ledger-paper: #12211a;
+  --color-ledger-paper-dim: #435b51;
+  --color-ledger-coral: #cf432d;
+  --color-ledger-gold: #9f7b15;
+  --color-ledger-slate: #eedebb;
+  --color-ledger-slate-light: #e2cca1;
+  --color-ledger-line: #dcd0b1;
+}
+
+body {
+  background-color: var(--color-ledger-dark);
+  color: var(--color-ledger-paper);
+  font-family: var(--font-sans);
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* Custom scrollbar for notebook feel */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--color-ledger-dark);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-ledger-slate-light);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-ledger-coral);
+}

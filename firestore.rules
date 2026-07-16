@@ -1,0 +1,74 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper to check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Rules for Tasks collection
+    match /tasks/{taskId} {
+      allow read: if isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid);
+      allow write: if isAuthenticated() && (request.resource == null || request.resource.data.userId == request.auth.uid);
+    }
+
+    // Rules for Exceptions collection
+    match /exceptions/{exceptionId} {
+      allow read: if isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid);
+      allow write: if isAuthenticated() && (request.resource == null || request.resource.data.userId == request.auth.uid);
+    }
+
+    // Rules for Completions collection
+    match /completions/{completionId} {
+      allow read: if isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid);
+      allow write: if isAuthenticated() && (request.resource == null || request.resource.data.userId == request.auth.uid);
+    }
+
+    // Rules for Must-dos collection
+    match /mustdos/{mustdoId} {
+      allow read: if isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid);
+      allow write: if isAuthenticated() && (request.resource == null || request.resource.data.userId == request.auth.uid);
+    }
+
+    // Rules for Templates collection
+    match /templates/{templateId} {
+      allow read: if isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid);
+      allow write: if isAuthenticated() && (request.resource == null || request.resource.data.userId == request.auth.uid);
+    }
+
+    // Rules for To-Dos collection
+    match /todos/{todoId} {
+      allow read: if isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid);
+      allow write: if isAuthenticated() && (request.resource == null || request.resource.data.userId == request.auth.uid);
+    }
+
+    // Rules for Day Reflections collection
+    match /day_reflections/{reflectionId} {
+      allow read: if isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid);
+      allow write: if isAuthenticated() && (request.resource == null || request.resource.data.userId == request.auth.uid);
+    }
+
+    // Rules for Daily Goals collection
+    match /daily_goals/{goalId} {
+      allow read: if isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid);
+      allow write: if isAuthenticated() && (request.resource == null || request.resource.data.userId == request.auth.uid);
+    }
+
+    // Rules for Subscriptions collection
+    match /subscriptions/{subId} {
+      allow read: if isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid);
+      allow write: if isAuthenticated() && (request.resource == null || request.resource.data.userId == request.auth.uid);
+    }
+
+    // Rules for Categories collection
+    match /categories/{categoryId} {
+      allow read: if isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid);
+      allow write: if isAuthenticated() && (request.resource == null || request.resource.data.userId == request.auth.uid);
+    }
+  }
+}

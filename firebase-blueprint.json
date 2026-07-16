@@ -1,0 +1,208 @@
+{
+  "entities": {
+    "Task": {
+      "title": "Task",
+      "description": "A recurring or one-off scheduled hour block on the calendar grid",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "The unique document ID" },
+        "userId": { "type": "string", "description": "Owner profile UID" },
+        "title": { "type": "string", "maxLength": 100, "description": "The visible title" },
+        "notes": { "type": "string", "maxLength": 500 },
+        "startHour": { "type": "integer" },
+        "endHour": { "type": "integer" },
+        "anchorDate": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+        "recurrence": { "type": "string", "enum": ["NONE", "DAILY", "WEEKLY", "MONTHLY", "YEARLY"] },
+        "notifyEnabled": { "type": "boolean" },
+        "priority": { "type": "boolean" },
+        "categoryColor": { "type": "string" },
+        "color": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["userId", "title", "startHour", "endHour", "anchorDate", "recurrence", "notifyEnabled", "color"]
+    },
+    "TaskException": {
+      "title": "TaskException",
+      "description": "An override that allows a single occurrence of a recurring series to be modified or skipped",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "taskId": { "type": "string" },
+        "date": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+        "type": { "type": "string", "enum": ["SKIPPED", "MODIFIED"] },
+        "overrideTitle": { "type": "string", "maxLength": 100 },
+        "overrideStartHour": { "type": "integer" },
+        "overrideEndHour": { "type": "integer" },
+        "overrideNotes": { "type": "string", "maxLength": 500 },
+        "overrideCategoryColor": { "type": "string" },
+        "overridePriority": { "type": "boolean" }
+      },
+      "required": ["userId", "taskId", "date", "type"]
+    },
+    "TaskCompletion": {
+      "title": "TaskCompletion",
+      "description": "The status tracking completion/follow-through of a specific task occurrence",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "taskId": { "type": "string" },
+        "date": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+        "status": { "type": "string", "enum": ["DONE", "SKIPPED", "NO_RESPONSE"] },
+        "completedAt": { "type": "string" }
+      },
+      "required": ["userId", "taskId", "date", "status"]
+    },
+    "MustDoItem": {
+      "title": "MustDoItem",
+      "description": "Daily non-negotiable items separate from the hourly layout",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "date": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+        "title": { "type": "string", "maxLength": 100 },
+        "done": { "type": "boolean" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["userId", "date", "title", "done"]
+    },
+    "TaskTemplate": {
+      "title": "TaskTemplate",
+      "description": "Presets of task settings for rapid creation",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "title": { "type": "string", "maxLength": 100 },
+        "startHour": { "type": "integer" },
+        "endHour": { "type": "integer" },
+        "recurrence": { "type": "string", "enum": ["NONE", "DAILY", "WEEKLY", "MONTHLY", "YEARLY"] },
+        "categoryColor": { "type": "string" },
+        "priority": { "type": "boolean" },
+        "notes": { "type": "string", "maxLength": 500 }
+      },
+      "required": ["userId", "title", "startHour", "endHour", "recurrence", "categoryColor", "priority"]
+    },
+    "TodoItem": {
+      "title": "TodoItem",
+      "description": "Open-ended to-do list item for quick capture",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "title": { "type": "string", "maxLength": 200 },
+        "notes": { "type": "string", "maxLength": 500 },
+        "dueDate": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+        "done": { "type": "boolean" },
+        "priority": { "type": "boolean" },
+        "order": { "type": "integer" },
+        "createdAt": { "type": "string" },
+        "completedAt": { "type": "string" }
+      },
+      "required": ["userId", "title", "done", "order", "createdAt"]
+    },
+    "DayReflection": {
+      "title": "DayReflection",
+      "description": "One freeform note/reflection per day, separate from any single task",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "date": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+        "note": { "type": "string", "maxLength": 2000 },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["userId", "date", "note", "createdAt"]
+    },
+    "DailyGoal": {
+      "title": "DailyGoal",
+      "description": "Primary daily goal set by the user for a specific day",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "date": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+        "goal": { "type": "string", "maxLength": 500 },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["userId", "date", "goal", "createdAt"]
+    },
+    "PushSubscriptionData": {
+      "title": "PushSubscriptionData",
+      "description": "Web Push subscription record for notification payloads",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "endpoint": { "type": "string" },
+        "keys": {
+          "type": "object",
+          "properties": {
+            "p256dh": { "type": "string" },
+            "auth": { "type": "string" }
+          },
+          "required": ["p256dh", "auth"]
+        }
+      },
+      "required": ["userId", "endpoint", "keys"]
+    },
+    "TaskCategory": {
+      "title": "TaskCategory",
+      "description": "User-defined custom category labels and colors for tasks",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "name": { "type": "string", "maxLength": 100 },
+        "color": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["userId", "name", "color", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/tasks/{taskId}": {
+      "schema": "Task",
+      "description": "All scheduled calendar task items"
+    },
+    "/exceptions/{exceptionId}": {
+      "schema": "TaskException",
+      "description": "Exceptions for modifying or skipping occurrences"
+    },
+    "/completions/{completionId}": {
+      "schema": "TaskCompletion",
+      "description": "Completed or skipped occurrences histories"
+    },
+    "/mustdos/{mustdoId}": {
+      "schema": "MustDoItem",
+      "description": "Unbounded lists of daily non-negotiable check items"
+    },
+    "/templates/{templateId}": {
+      "schema": "TaskTemplate",
+      "description": "Personalized user templates"
+    },
+    "/todos/{todoId}": {
+      "schema": "TodoItem",
+      "description": "To-do items of someday/whenever capture list"
+    },
+    "/day_reflections/{reflectionId}": {
+      "schema": "DayReflection",
+      "description": "User daily reflection notes"
+    },
+    "/daily_goals/{goalId}": {
+      "schema": "DailyGoal",
+      "description": "Primary daily goals"
+    },
+    "/subscriptions/{subId}": {
+      "schema": "PushSubscriptionData",
+      "description": "Web push subscriber endpoints"
+    },
+    "/categories/{categoryId}": {
+      "schema": "TaskCategory",
+      "description": "User-defined task categories"
+    }
+  }
+}
