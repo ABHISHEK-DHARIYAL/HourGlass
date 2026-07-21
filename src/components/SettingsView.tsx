@@ -4,11 +4,18 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { auth, firebaseSignOut, db, googleProvider, User } from '../firebase';
-import { deleteUser, reauthenticateWithPopup } from 'firebase/auth';
+import { auth, firebaseSignOut, db, googleProvider, User, doc, getDoc, setDoc, messaging } from '../firebase';
+import { deleteUser, reauthenticateWithPopup, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 import { collection, query, where, getDocs, deleteDoc } from 'firebase/firestore';
+import { getToken, deleteToken } from 'firebase/messaging';
 import { urlBase64ToUint8Array } from '../utils/pushUtils';
 import { TaskCategory } from '../types';
+import { 
+  loadNotificationSettings, 
+  saveNotificationSettings, 
+  NotificationSettings,
+  DEFAULT_NOTIFICATION_SETTINGS
+} from '../utils/notificationService';
 import { 
   Bell, 
   BellOff, 
@@ -28,7 +35,18 @@ import {
   Edit2,
   Save,
   Tag,
-  X
+  X,
+  Volume2,
+  VolumeX,
+  Zap,
+  Clock,
+  Sparkles,
+  Coffee,
+  Calendar,
+  Moon as MoonStar,
+  Activity,
+  Lock,
+  KeyRound
 } from 'lucide-react';
 
 interface SettingsViewProps {
@@ -129,15 +147,25 @@ export default function SettingsView({
   const [showDeleteAccountConfirm, setShowDeleteAccountConfirm] = useState(false);
   const [deletingAccount, setDeletingAccount] = useState(false);
   const [needsReauth, setNeedsReauth] = useState(false);
-  const [smartReminders, setSmartReminders] = useState(() => {
-    return localStorage.getItem('hourglass_smart_reminders') === 'true';
+  const [showReauthModal, setShowReauthModal] = useState(false);
+  const [reauthorizing, setReauthorizing] = useState(false);
+  const [reauthPassword, setReauthPassword] = useState('');
+  const [reauthError, setReauthError] = useState<string | null>(null);
+  const [notifSettings, setNotifSettings] = useState<NotificationSettings>(() => {
+    return loadNotificationSettings(user.uid);
   });
+
+  const handleUpdateNotifSetting = async (key: keyof NotificationSettings, value: any) => {
+    const updated = { ...notifSettings, [key]: value };
+    setNotifSettings(updated);
+    await saveNotificationSettings(user.uid, updated);
+  };
 
   const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 
   // Check support and current subscription on mount
   useEffect(() => {
-    if ('serviceWorker' in navigator && 'PushManager' in window) {
+    if ('serviceWorker' in navigator && 'Notification' in window && messaging) {
       setPushSupported(true);
       setPermissionStatus(Notification.permission);
       checkCurrentSubscription();
@@ -145,12 +173,35 @@ export default function SettingsView({
   }, []);
 
   const checkCurrentSubscription = async () => {
+    if (!messaging) return;
     try {
-      const registration = await navigator.serviceWorker.ready;
-      const subscription = await registration.pushManager.getSubscription();
-      setIsSubscribed(!!subscription);
+      if (Notification.permission === 'granted') {
+        const vapidKey = (import.meta as any).env?.VITE_FIREBASE_VAPID_KEY || undefined;
+        const token = await getToken(messaging, { vapidKey });
+        if (token) {
+          setIsSubscribed(true);
+          try {
+            const userDocRef = doc(db, 'users', user.uid);
+            await setDoc(userDocRef, {
+              fcmToken: token,
+              notificationSettings: notifSettings,
+              timezone: userTimezone,
+              updatedAt: new Date().toISOString()
+            }, { merge: true });
+          } catch (firestoreErr) {
+            console.warn('Failed to save push subscription to Firestore, syncing with backend as fallback:', firestoreErr);
+          }
+          // Always synchronize token and settings with backend
+          await saveNotificationSettings(user.uid, notifSettings);
+        } else {
+          setIsSubscribed(false);
+        }
+      } else {
+        setIsSubscribed(false);
+      }
     } catch (err) {
       console.warn('Failed to check push subscription:', err);
+      setIsSubscribed(false);
     }
   };
 
@@ -186,35 +237,32 @@ export default function SettingsView({
         return;
       }
 
-      // 2. Fetch public key from our server
-      const response = await fetch('/api/vapid-public-key');
-      if (!response.ok) {
-        throw new Error('Failed to retrieve VAPID public key from backend.');
+      if (!messaging) {
+        throw new Error('Firebase Messaging is not configured correctly on this app.');
       }
-      const { publicKey } = await response.json();
 
-      // 3. Register push subscription on service worker
-      const registration = await navigator.serviceWorker.ready;
-      const subscription = await registration.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(publicKey)
-      });
+      // 2. Get FCM Token
+      const vapidKey = (import.meta as any).env?.VITE_FIREBASE_VAPID_KEY || undefined;
+      const token = await getToken(messaging, { vapidKey });
+      if (!token) {
+        throw new Error('Failed to generate a registration token.');
+      }
 
-      // 4. Send subscription data to our Express backend
-      const subscribeResponse = await fetch('/api/subscribe', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userId: user.uid,
-          subscription,
+      // 3. Save FCM Token to Firestore users/{uid}
+      try {
+        const userDocRef = doc(db, 'users', user.uid);
+        await setDoc(userDocRef, {
+          fcmToken: token,
+          notificationSettings: notifSettings,
           timezone: userTimezone,
-          smartReminders: localStorage.getItem('hourglass_smart_reminders') === 'true'
-        })
-      });
-
-      if (!subscribeResponse.ok) {
-        throw new Error('Failed to register subscription with the backend server.');
+          updatedAt: new Date().toISOString()
+        }, { merge: true });
+      } catch (firestoreErr) {
+        console.warn('Failed to save push subscription to Firestore, syncing with backend as fallback:', firestoreErr);
       }
+
+      // Always synchronize token and settings with backend
+      await saveNotificationSettings(user.uid, notifSettings);
 
       setIsSubscribed(true);
       setSuccessMessage('Push notifications successfully enabled on this device.');
@@ -232,20 +280,24 @@ export default function SettingsView({
     setSuccessMessage(null);
 
     try {
-      const registration = await navigator.serviceWorker.ready;
-      const subscription = await registration.pushManager.getSubscription();
-      
-      if (subscription) {
-        // 1. Unsubscribe locally
-        await subscription.unsubscribe();
-
-        // 2. Tell backend to delete
-        await fetch('/api/unsubscribe', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ subscription })
-        });
+      if (messaging) {
+        await deleteToken(messaging);
       }
+      
+      try {
+        const userDocRef = doc(db, 'users', user.uid);
+        await setDoc(userDocRef, {
+          fcmToken: '',
+          notificationSettings: notifSettings,
+          timezone: userTimezone,
+          updatedAt: new Date().toISOString()
+        }, { merge: true });
+      } catch (firestoreErr) {
+        console.warn('Failed to clear push subscription in Firestore, syncing with backend as fallback:', firestoreErr);
+      }
+
+      // Always synchronize settings (and cleared token) with backend
+      await saveNotificationSettings(user.uid, notifSettings);
 
       setIsSubscribed(false);
       setSuccessMessage('Notifications disabled successfully on this device.');
@@ -257,27 +309,7 @@ export default function SettingsView({
     }
   };
 
-  const handleToggleSmartReminders = async () => {
-    const nextVal = !smartReminders;
-    setSmartReminders(nextVal);
-    localStorage.setItem('hourglass_smart_reminders', String(nextVal));
 
-    try {
-      const response = await fetch('/api/smart-reminders', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userId: user.uid,
-          enabled: nextVal
-        })
-      });
-      if (!response.ok) {
-        throw new Error('Failed to update smart reminders on server.');
-      }
-    } catch (err) {
-      console.error('Failed to sync smart reminders preference:', err);
-    }
-  };
 
   const handleSignOut = () => {
     if (user.uid === 'guest_user') {
@@ -288,22 +320,107 @@ export default function SettingsView({
     firebaseSignOut(auth).catch(console.error);
   };
 
-  const handleDeleteAccount = async (forceReauth = false) => {
+  const handleReauthenticateAndRetry = async () => {
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+      setErrorMessage('No authenticated user found for re-authentication.');
+      setShowReauthModal(false);
+      return;
+    }
+
+    setReauthorizing(true);
+    setReauthError(null);
+    setErrorMessage(null);
+    try {
+      console.log('Initiating Google re-authentication via popup...');
+      await reauthenticateWithPopup(currentUser, googleProvider);
+      console.log('Re-authentication successful! Resuming account deletion...');
+      setShowReauthModal(false);
+      setReauthPassword('');
+      // Automatically retry account deletion now that we are recently authenticated
+      await handleDeleteAccount();
+    } catch (reauthErr: any) {
+      console.error('Google re-authentication failed:', reauthErr);
+      let errMsg = reauthErr.message || 'Failed to verify identity. Please try again.';
+      if (reauthErr.code === 'auth/popup-blocked') {
+        errMsg = 'Re-authentication popup was blocked by your browser. Please allow popups or open the app in a new tab, then try again.';
+      } else if (reauthErr.code === 'auth/popup-closed-by-user') {
+        errMsg = 'Re-authentication popup was closed before completion. Please try again.';
+      }
+      setReauthError(errMsg);
+    } finally {
+      setReauthorizing(false);
+    }
+  };
+
+  const handlePasswordReauthenticateAndRetry = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+      setErrorMessage('No authenticated user found for re-authentication.');
+      setShowReauthModal(false);
+      return;
+    }
+
+    if (!reauthPassword) {
+      setReauthError('Please enter your password.');
+      return;
+    }
+
+    setReauthorizing(true);
+    setReauthError(null);
+    setErrorMessage(null);
+    try {
+      console.log('Initiating Password re-authentication...');
+      const credential = EmailAuthProvider.credential(currentUser.email || '', reauthPassword);
+      await reauthenticateWithCredential(currentUser, credential);
+      console.log('Password re-authentication successful! Resuming account deletion...');
+      setShowReauthModal(false);
+      setReauthPassword('');
+      // Automatically retry account deletion now that we are recently authenticated
+      await handleDeleteAccount();
+    } catch (reauthErr: any) {
+      console.error('Password re-authentication failed:', reauthErr);
+      let errMsg = reauthErr.message || 'Failed to verify identity. Please check your password and try again.';
+      if (reauthErr.code === 'auth/wrong-password') {
+        errMsg = 'Incorrect password. Please try again.';
+      }
+      setReauthError(errMsg);
+    } finally {
+      setReauthorizing(false);
+    }
+  };
+
+  const handleDeleteAccount = async () => {
     if (user.uid === 'guest_user') {
       setDeletingAccount(true);
       try {
-        localStorage.removeItem('hourglass_guest_user');
-        localStorage.removeItem('hourglass_tasks');
-        localStorage.removeItem('hourglass_exceptions');
-        localStorage.removeItem('hourglass_completions');
-        localStorage.removeItem('hourglass_mustdos');
-        localStorage.removeItem('hourglass_templates');
-        window.location.reload();
+        localStorage.clear();
+        sessionStorage.clear();
+        await new Promise<void>((resolve) => {
+          const req = indexedDB.deleteDatabase('HourglassOfflineDB');
+          req.onsuccess = () => resolve();
+          req.onerror = () => resolve();
+          req.onblocked = () => resolve();
+        });
+        if ('caches' in window) {
+          try {
+            const keys = await caches.keys();
+            await Promise.all(keys.map(key => caches.delete(key)));
+          } catch (e) {
+            console.warn(e);
+          }
+        }
+        setSuccessMessage('Guest account and all cached data have been deleted. Redirecting...');
+        setTimeout(() => {
+          window.location.reload();
+        }, 1500);
       } finally {
         setDeletingAccount(false);
       }
       return;
     }
+
     setDeletingAccount(true);
     setErrorMessage(null);
     setSuccessMessage(null);
@@ -314,64 +431,133 @@ export default function SettingsView({
         throw new Error('No user is currently signed in.');
       }
 
-      // If we are forcing reauth, reauthenticate with popup first
-      if (forceReauth) {
-        try {
-          await reauthenticateWithPopup(currentUser, googleProvider);
-          setNeedsReauth(false);
-        } catch (reauthErr: any) {
-          console.error('Reauthentication failed:', reauthErr);
-          if (reauthErr.code === 'auth/popup-blocked') {
-            throw new Error('Re-authentication popup was blocked by your browser. Please allow popups or open the app in a new tab, then try again.');
-          } else {
-            throw new Error(reauthErr.message || 'Failed to verify identity. Please try again.');
-          }
-        }
-      }
+      console.log('Starting account deletion flow...');
 
-      // 1. Unsubscribe push notifications locally if active
+      // 1. Delete FCM push notification token locally if active
       try {
-        if ('serviceWorker' in navigator && 'PushManager' in window) {
-          const registration = await navigator.serviceWorker.ready;
-          const subscription = await registration.pushManager.getSubscription();
-          if (subscription) {
-            await subscription.unsubscribe();
-          }
+        if (messaging) {
+          await deleteToken(messaging);
+          console.log('Deleted FCM token successfully.');
         }
       } catch (err) {
-        console.warn('Failed to unsubscribe push notifications during account deletion:', err);
+        console.warn('Failed to delete FCM token during account deletion:', err);
       }
 
-      // 2. Fetch and delete all tasks for this user from Firestore
-      const tasksRef = collection(db, 'tasks');
-      const q = query(tasksRef, where('userId', '==', user.uid));
-      const querySnapshot = await getDocs(q);
-      
-      const deletePromises: Promise<void>[] = [];
-      querySnapshot.forEach((docSnap) => {
-        deletePromises.push(deleteDoc(docSnap.ref));
-      });
-      await Promise.all(deletePromises);
+      // Delete user profile document from Firestore
+      try {
+        await deleteDoc(doc(db, 'users', user.uid));
+        console.log('Deleted user profile document.');
+      } catch (err) {
+        console.warn('Failed to delete user profile document:', err);
+      }
 
-      // 3. Request server-side cleanup (subscriptions.json and tasks.json)
-      const serverCleanupResponse = await fetch('/api/delete-account', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: user.uid })
-      });
+      // 2. Fetch and delete all user data across all Firestore collections to prevent orphaned entries
+      const collectionsToDelete = [
+        'tasks',
+        'exceptions',
+        'completions',
+        'mustdos',
+        'templates',
+        'todos',
+        'day_reflections',
+        'daily_goals',
+        'subscriptions',
+        'categories',
+        'habits',
+        'habit_history'
+      ];
 
-      if (!serverCleanupResponse.ok) {
-        console.warn('Backend server-side database cleanup failed or returned an error.');
+      console.log('Starting complete user data deletion in Firestore for user:', user.uid);
+      for (const colName of collectionsToDelete) {
+        try {
+          const colRef = collection(db, colName);
+          const q = query(colRef, where('userId', '==', user.uid));
+          const querySnapshot = await getDocs(q);
+          
+          if (!querySnapshot.empty) {
+            console.log(`Deleting ${querySnapshot.size} documents from Firestore collection: "${colName}"`);
+            const deletePromises = querySnapshot.docs.map((docSnap) => deleteDoc(docSnap.ref));
+            await Promise.all(deletePromises);
+            console.log(`Finished deletion for Firestore collection: "${colName}"`);
+          }
+        } catch (colErr: any) {
+          console.error(`Error deleting documents from collection "${colName}":`, colErr);
+          // If we fail because of requires-recent-login, bubble it up
+          if (colErr && colErr.code === 'auth/requires-recent-login') {
+            throw colErr;
+          }
+        }
+      }
+
+      // 3. Request server-side cleanup (Firestore and tasks.json)
+      try {
+        const serverCleanupResponse = await fetch('/api/delete-account', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId: user.uid })
+        });
+
+        if (!serverCleanupResponse.ok) {
+          console.warn('Backend server-side database cleanup failed or returned an error.');
+        } else {
+          console.log('Backend server-side database cleanup completed successfully.');
+        }
+      } catch (serverErr) {
+        console.error('Failed to request server-side cleanup:', serverErr);
       }
 
       // 4. Delete Auth user from Firebase Authentication
+      console.log('Deleting user account from Firebase Authentication...');
       await deleteUser(currentUser);
+      console.log('Firebase Authentication user deleted successfully.');
+
+      // 5. Sign the user out from Firebase
+      try {
+        await firebaseSignOut(auth);
+      } catch (signOutErr) {
+        console.warn('Post-deletion sign-out error (non-blocking):', signOutErr);
+      }
+
+      // 6. Clear Client-Side Cache, IndexedDB, LocalStorage, SessionStorage
+      console.log('Clearing local caches, databases, and localStorage...');
+      localStorage.clear();
+      sessionStorage.clear();
+
+      await new Promise<void>((resolve) => {
+        const req = indexedDB.deleteDatabase('HourglassOfflineDB');
+        req.onsuccess = () => {
+          console.log('IndexedDB HourglassOfflineDB deleted.');
+          resolve();
+        };
+        req.onerror = (err) => {
+          console.error('IndexedDB deletion error:', err);
+          resolve();
+        };
+        req.onblocked = () => {
+          console.warn('IndexedDB deletion blocked.');
+          resolve();
+        };
+      });
+
+      if ('caches' in window) {
+        try {
+          const keys = await caches.keys();
+          await Promise.all(keys.map(key => caches.delete(key)));
+          console.log('Cleared all window cache stores.');
+        } catch (cacheErr) {
+          console.error('Failed to clear window caches:', cacheErr);
+        }
+      }
+
+      setSuccessMessage('Your account and all associated data have been permanently deleted. Redirecting to the login screen...');
+      setTimeout(() => {
+        window.location.href = '/'; // Full page reload/redirect to index ensuring clean app state
+      }, 3000);
 
     } catch (err: any) {
       if (err && err.code === 'auth/requires-recent-login') {
         console.warn('Account deletion requires recent login. Prompting for verification.');
-        setNeedsReauth(true);
-        setErrorMessage('For security reasons, deleting your account requires verifying your identity. Please click "Verify Identity & Delete" below to verify and complete the deletion.');
+        setShowReauthModal(true);
       } else {
         console.error('Failed to completely delete account:', err);
         setErrorMessage(err.message || 'An error occurred while deleting your account. Please try again.');
@@ -516,28 +702,269 @@ export default function SettingsView({
                   )}
                 </button>
 
-                {isSubscribed && (
-                  <div className="mt-3 p-3 bg-ledger-dark/50 border border-ledger-line/50 rounded-xl flex items-center justify-between gap-3 animate-in fade-in slide-in-from-top-1 duration-200">
-                    <div className="flex-1">
-                      <div className="text-xs font-semibold text-ledger-paper">Smart Reminders</div>
-                      <p className="text-[10px] text-ledger-paper-dim/70 mt-0.5 leading-relaxed">
-                        Triggers push notifications 15 minutes before your high-priority tasks begin to help you prepare.
+                {/* Comprehensive Notification Control Dashboard */}
+                <div className="mt-5 border-t border-ledger-line/40 pt-4 space-y-4 animate-in fade-in duration-350">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="text-xs font-bold text-ledger-paper uppercase tracking-wider flex items-center gap-1.5">
+                        <Activity className="w-3.5 h-3.5 text-ledger-coral" />
+                        <span>Interactive Engine Settings</span>
+                      </h4>
+                      <p className="text-[10px] text-ledger-paper-dim/60 mt-0.5">
+                        Configure client & background alert properties
                       </p>
                     </div>
                     <button
                       type="button"
-                      onClick={handleToggleSmartReminders}
-                      id="smart-reminders-toggle"
-                      className={`w-12 h-6 rounded-full p-1 transition-colors cursor-pointer shrink-0 flex items-center ${
-                        smartReminders ? 'bg-ledger-coral justify-end' : 'bg-ledger-slate-light justify-start border border-ledger-line'
+                      onClick={() => handleUpdateNotifSetting('enabled', !notifSettings.enabled)}
+                      id="master-notification-switch"
+                      className={`w-10 h-5 rounded-full p-0.5 transition-colors cursor-pointer flex items-center ${
+                        notifSettings.enabled ? 'bg-ledger-coral justify-end' : 'bg-ledger-slate-light justify-start border border-ledger-line'
                       }`}
                     >
-                      <span className={`w-4 h-4 rounded-full transition-all ${
-                        smartReminders ? 'bg-ledger-dark' : 'bg-ledger-paper-dim'
-                      }`} />
+                      <span className="w-4 h-4 rounded-full bg-ledger-dark shadow-sm" />
                     </button>
                   </div>
-                )}
+
+                  {notifSettings.enabled && (
+                    <div className="space-y-3.5 pl-1.5 animate-in fade-in slide-in-from-top-1.5 duration-200">
+                      
+                      {/* Audio & Vibration */}
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="p-2.5 bg-ledger-dark/45 border border-ledger-line/30 rounded-xl flex items-center justify-between gap-2">
+                          <span className="text-[11px] font-semibold text-ledger-paper-dim flex items-center gap-1.5">
+                            {notifSettings.soundEnabled ? <Volume2 className="w-3.5 h-3.5 text-ledger-coral" /> : <VolumeX className="w-3.5 h-3.5 text-ledger-paper-dim/50" />}
+                            <span>Audio Chimes</span>
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleUpdateNotifSetting('soundEnabled', !notifSettings.soundEnabled)}
+                            id="sound-alert-switch"
+                            className={`w-8 h-4.5 rounded-full p-0.5 transition-colors cursor-pointer flex items-center ${
+                              notifSettings.soundEnabled ? 'bg-ledger-coral justify-end' : 'bg-ledger-slate-light justify-start border border-ledger-line'
+                            }`}
+                          >
+                            <span className="w-3 h-3 rounded-full bg-ledger-dark" />
+                          </button>
+                        </div>
+
+                        <div className="p-2.5 bg-ledger-dark/45 border border-ledger-line/30 rounded-xl flex items-center justify-between gap-2">
+                          <span className="text-[11px] font-semibold text-ledger-paper-dim flex items-center gap-1.5">
+                            <Zap className="w-3.5 h-3.5 text-ledger-coral" />
+                            <span>Vibrations</span>
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleUpdateNotifSetting('vibrationEnabled', !notifSettings.vibrationEnabled)}
+                            id="vibrate-switch"
+                            className={`w-8 h-4.5 rounded-full p-0.5 transition-colors cursor-pointer flex items-center ${
+                              notifSettings.vibrationEnabled ? 'bg-ledger-coral justify-end' : 'bg-ledger-slate-light justify-start border border-ledger-line'
+                            }`}
+                          >
+                            <span className="w-3 h-3 rounded-full bg-ledger-dark" />
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Reminder Timing */}
+                      <div className="p-2.5 bg-ledger-dark/45 border border-ledger-line/30 rounded-xl flex items-center justify-between gap-3">
+                        <div className="flex-1">
+                          <div className="text-[11px] font-semibold text-ledger-paper flex items-center gap-1.5">
+                            <Clock className="w-3.5 h-3.5 text-ledger-coral" />
+                            <span>Upcoming Reminders</span>
+                          </div>
+                          <p className="text-[9px] text-ledger-paper-dim/60">
+                            Pre-alert offset timing prior to task start
+                          </p>
+                        </div>
+                        <select
+                          value={notifSettings.reminderTiming}
+                          onChange={(e) => handleUpdateNotifSetting('reminderTiming', parseInt(e.target.value, 10))}
+                          className="bg-ledger-dark border border-ledger-line text-ledger-paper text-[10px] rounded-lg px-2 py-1 focus:outline-none focus:border-ledger-coral font-mono"
+                        >
+                          <option value="5">5 Minutes</option>
+                          <option value="10">10 Minutes</option>
+                          <option value="15">15 Minutes</option>
+                          <option value="30">30 Minutes</option>
+                        </select>
+                      </div>
+
+                      {/* Daily Morning Summary */}
+                      <div className="p-3 bg-ledger-dark/45 border border-ledger-line/30 rounded-xl space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-semibold text-ledger-paper flex items-center gap-1.5">
+                            <Sparkles className="w-3.5 h-3.5 text-ledger-coral" />
+                            <span>Morning Briefing</span>
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleUpdateNotifSetting('morningSummaryEnabled', !notifSettings.morningSummaryEnabled)}
+                            id="morning-summary-switch"
+                            className={`w-8 h-4.5 rounded-full p-0.5 transition-colors cursor-pointer flex items-center ${
+                              notifSettings.morningSummaryEnabled ? 'bg-ledger-coral justify-end' : 'bg-ledger-slate-light justify-start border border-ledger-line'
+                            }`}
+                          >
+                            <span className="w-3 h-3 rounded-full bg-ledger-dark" />
+                          </button>
+                        </div>
+                        {notifSettings.morningSummaryEnabled && (
+                          <div className="flex items-center justify-between pl-5 pt-1 animate-in fade-in duration-150">
+                            <span className="text-[9px] text-ledger-paper-dim/60 font-medium">Daily Delivery Time</span>
+                            <input
+                              type="time"
+                              value={notifSettings.morningSummaryTime}
+                              onChange={(e) => handleUpdateNotifSetting('morningSummaryTime', e.target.value)}
+                              className="bg-ledger-dark border border-ledger-line text-ledger-paper text-[10px] rounded-lg px-2 py-1 focus:outline-none focus:border-ledger-coral font-mono"
+                            />
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Daily Evening Summary */}
+                      <div className="p-3 bg-ledger-dark/45 border border-ledger-line/30 rounded-xl space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-semibold text-ledger-paper flex items-center gap-1.5">
+                            <MoonStar className="w-3.5 h-3.5 text-ledger-coral" />
+                            <span>Evening Briefing</span>
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleUpdateNotifSetting('eveningSummaryEnabled', !notifSettings.eveningSummaryEnabled)}
+                            id="evening-summary-switch"
+                            className={`w-8 h-4.5 rounded-full p-0.5 transition-colors cursor-pointer flex items-center ${
+                              notifSettings.eveningSummaryEnabled ? 'bg-ledger-coral justify-end' : 'bg-ledger-slate-light justify-start border border-ledger-line'
+                            }`}
+                          >
+                            <span className="w-3 h-3 rounded-full bg-ledger-dark" />
+                          </button>
+                        </div>
+                        {notifSettings.eveningSummaryEnabled && (
+                          <div className="flex items-center justify-between pl-5 pt-1 animate-in fade-in duration-150">
+                            <span className="text-[9px] text-ledger-paper-dim/60 font-medium">Daily Delivery Time</span>
+                            <input
+                              type="time"
+                              value={notifSettings.eveningSummaryTime}
+                              onChange={(e) => handleUpdateNotifSetting('eveningSummaryTime', e.target.value)}
+                              className="bg-ledger-dark border border-ledger-line text-ledger-paper text-[10px] rounded-lg px-2 py-1 focus:outline-none focus:border-ledger-coral font-mono"
+                            />
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Habit Reminders & Smart Break advices */}
+                      <div className="grid grid-cols-1 gap-2">
+                        <div className="p-2.5 bg-ledger-dark/45 border border-ledger-line/30 rounded-xl flex items-center justify-between">
+                          <div className="flex-1">
+                            <div className="text-[11px] font-semibold text-ledger-paper flex items-center gap-1.5">
+                              <Calendar className="w-3.5 h-3.5 text-ledger-coral" />
+                              <span>Habit Alerts</span>
+                            </div>
+                            <p className="text-[9px] text-ledger-paper-dim/60">
+                              Notify if daily habits are pending
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleUpdateNotifSetting('habitRemindersEnabled', !notifSettings.habitRemindersEnabled)}
+                            id="habit-alerts-switch"
+                            className={`w-8 h-4.5 rounded-full p-0.5 transition-colors cursor-pointer flex items-center ${
+                              notifSettings.habitRemindersEnabled ? 'bg-ledger-coral justify-end' : 'bg-ledger-slate-light justify-start border border-ledger-line'
+                            }`}
+                          >
+                            <span className="w-3 h-3 rounded-full bg-ledger-dark" />
+                          </button>
+                        </div>
+
+                        <div className="p-3 bg-ledger-dark/45 border border-ledger-line/30 rounded-xl space-y-2">
+                          <div className="flex items-center justify-between">
+                            <div className="flex-1">
+                              <div className="text-[11px] font-semibold text-ledger-paper flex items-center gap-1.5">
+                                <Coffee className="w-3.5 h-3.5 text-ledger-coral" />
+                                <span>Smart Break Advice</span>
+                              </div>
+                              <p className="text-[9px] text-ledger-paper-dim/60">
+                                Suggest stretch breaks during deep focus
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handleUpdateNotifSetting('breakRemindersEnabled', !notifSettings.breakRemindersEnabled)}
+                              id="break-reminders-switch"
+                              className={`w-8 h-4.5 rounded-full p-0.5 transition-colors cursor-pointer flex items-center ${
+                                notifSettings.breakRemindersEnabled ? 'bg-ledger-coral justify-end' : 'bg-ledger-slate-light justify-start border border-ledger-line'
+                              }`}
+                            >
+                              <span className="w-3 h-3 rounded-full bg-ledger-dark" />
+                            </button>
+                          </div>
+                          {notifSettings.breakRemindersEnabled && (
+                            <div className="flex items-center justify-between pl-5 pt-1 animate-in fade-in duration-150">
+                              <span className="text-[9px] text-ledger-paper-dim/60 font-medium">Interval Threshold</span>
+                              <select
+                                value={notifSettings.breakIntervalMinutes}
+                                onChange={(e) => handleUpdateNotifSetting('breakIntervalMinutes', parseInt(e.target.value, 10))}
+                                className="bg-ledger-dark border border-ledger-line text-ledger-paper text-[10px] rounded-lg px-2 py-1 focus:outline-none focus:border-ledger-coral font-mono"
+                              >
+                                <option value="30">30 minutes</option>
+                                <option value="45">45 minutes</option>
+                                <option value="60">60 minutes</option>
+                                <option value="90">90 minutes</option>
+                              </select>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Quiet Hours / Do Not Disturb */}
+                      <div className="p-3 bg-ledger-dark/45 border border-ledger-line/30 rounded-xl space-y-2">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <span className="text-[11px] font-semibold text-ledger-paper flex items-center gap-1.5">
+                              <MoonStar className="w-3.5 h-3.5 text-ledger-coral" />
+                              <span>Quiet Hours</span>
+                            </span>
+                            <p className="text-[9px] text-ledger-paper-dim/60">
+                              Suppress alerts during specific hours
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleUpdateNotifSetting('quietHoursEnabled', !notifSettings.quietHoursEnabled)}
+                            id="quiet-hours-switch"
+                            className={`w-8 h-4.5 rounded-full p-0.5 transition-colors cursor-pointer flex items-center ${
+                              notifSettings.quietHoursEnabled ? 'bg-ledger-coral justify-end' : 'bg-ledger-slate-light justify-start border border-ledger-line'
+                            }`}
+                          >
+                            <span className="w-3 h-3 rounded-full bg-ledger-dark" />
+                          </button>
+                        </div>
+                        {notifSettings.quietHoursEnabled && (
+                          <div className="grid grid-cols-2 gap-3 pl-5 pt-1.5 animate-in fade-in duration-150">
+                            <div className="flex flex-col gap-1">
+                              <span className="text-[8px] text-ledger-paper-dim/60 uppercase font-bold">Start</span>
+                              <input
+                                type="time"
+                                value={notifSettings.quietHoursStart}
+                                onChange={(e) => handleUpdateNotifSetting('quietHoursStart', e.target.value)}
+                                className="bg-ledger-dark border border-ledger-line text-ledger-paper text-[10px] rounded-lg px-2 py-1 focus:outline-none focus:border-ledger-coral font-mono w-full"
+                              />
+                            </div>
+                            <div className="flex flex-col gap-1">
+                              <span className="text-[8px] text-ledger-paper-dim/60 uppercase font-bold">End</span>
+                              <input
+                                type="time"
+                                value={notifSettings.quietHoursEnd}
+                                onChange={(e) => handleUpdateNotifSetting('quietHoursEnd', e.target.value)}
+                                className="bg-ledger-dark border border-ledger-line text-ledger-paper text-[10px] rounded-lg px-2 py-1 focus:outline-none focus:border-ledger-coral font-mono w-full"
+                              />
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                    </div>
+                  )}
+                </div>
 
                 {permissionStatus === 'denied' && (
                   <div className="mt-3 p-3 rounded-xl bg-ledger-coral/10 border border-ledger-coral/20 text-ledger-paper-dim text-[11px] flex flex-col gap-1.5">
@@ -782,7 +1209,6 @@ export default function SettingsView({
                 type="button"
                 onClick={() => {
                   setShowDeleteAccountConfirm(false);
-                  setNeedsReauth(false);
                   setErrorMessage(null);
                 }}
                 disabled={deletingAccount}
@@ -792,7 +1218,7 @@ export default function SettingsView({
               </button>
               <button
                 type="button"
-                onClick={() => handleDeleteAccount(needsReauth)}
+                onClick={() => handleDeleteAccount()}
                 disabled={deletingAccount}
                 className="flex-1 h-10 bg-ledger-coral hover:bg-ledger-coral/90 text-ledger-dark text-xs font-bold rounded-lg active:scale-98 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
               >
@@ -801,7 +1227,7 @@ export default function SettingsView({
                 ) : (
                   <>
                     <UserX className="w-4 h-4" />
-                    <span>{needsReauth ? 'Verify & Delete' : 'Delete Account'}</span>
+                    <span>Delete Account</span>
                   </>
                 )}
               </button>
@@ -826,7 +1252,7 @@ export default function SettingsView({
               className="w-full h-11 flex items-center justify-center gap-2 text-ledger-coral/75 hover:text-ledger-coral hover:bg-ledger-coral/5 transition-all font-sans font-semibold text-xs rounded-xl cursor-pointer"
             >
               <UserX className="w-4 h-4" />
-              <span>Permanently Delete Account</span>
+              <span>Delete Account Permanently</span>
             </button>
           </div>
         )}
@@ -835,6 +1261,132 @@ export default function SettingsView({
           Version 1.0.0 (Stable)
         </div>
       </div>
+
+      {/* Re-authentication Dialog / Modal */}
+      {showReauthModal && (() => {
+        const currentUser = auth.currentUser;
+        const isGoogleUser = currentUser?.providerData.some(p => p.providerId === 'google.com') ?? true;
+        const isPasswordUser = currentUser?.providerData.some(p => p.providerId === 'password') ?? false;
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+            <div className="w-full max-w-sm bg-ledger-slate border border-ledger-line rounded-2xl p-6 shadow-2xl text-center">
+              <div className="w-12 h-12 rounded-full bg-ledger-coral/10 border border-ledger-coral/30 flex items-center justify-center mx-auto mb-4">
+                <ShieldAlert className="w-6 h-6 text-ledger-coral" />
+              </div>
+
+              <h3 className="font-serif text-lg font-bold text-ledger-paper mb-2">
+                Verification Required
+              </h3>
+              
+              <p className="text-xs text-ledger-paper-dim/90 leading-relaxed mb-6">
+                For security, deleting your account requires verifying your identity. Please verify to permanently delete your data and authentication record.
+              </p>
+
+              {reauthError && (
+                <div className="mb-4 p-3 rounded-lg bg-ledger-coral/10 border border-ledger-coral/30 text-ledger-coral text-xs text-left flex gap-2 items-start">
+                  <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span className="leading-relaxed">{reauthError}</span>
+                </div>
+              )}
+
+              <div className="flex flex-col gap-3">
+                {/* Google verification option */}
+                {isGoogleUser && (
+                  <button
+                    type="button"
+                    onClick={handleReauthenticateAndRetry}
+                    disabled={reauthorizing}
+                    className="w-full h-11 flex items-center justify-center gap-2 bg-ledger-coral hover:bg-ledger-coral/95 active:scale-98 transition-all text-ledger-dark font-sans font-bold text-xs rounded-xl shadow-md cursor-pointer disabled:opacity-50"
+                  >
+                    {reauthorizing ? (
+                      <span className="w-5 h-5 border-2 border-ledger-dark border-t-transparent rounded-full animate-spin"></span>
+                    ) : (
+                      <>
+                        <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
+                          <path
+                            fill="currentColor"
+                            d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                          />
+                          <path
+                            fill="currentColor"
+                            d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                          />
+                          <path
+                            fill="currentColor"
+                            d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22c-.81-.63-1.41-1.52-1.66-2.63z"
+                          />
+                          <path
+                            fill="currentColor"
+                            d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
+                          />
+                        </svg>
+                        <span>Verify Identity with Google</span>
+                      </>
+                    )}
+                  </button>
+                )}
+
+                {isGoogleUser && isPasswordUser && (
+                  <div className="flex items-center gap-2 my-1">
+                    <hr className="flex-1 border-ledger-line" />
+                    <span className="text-[10px] font-mono text-ledger-paper-dim uppercase tracking-wider">or</span>
+                    <hr className="flex-1 border-ledger-line" />
+                  </div>
+                )}
+
+                {/* Password verification option */}
+                {isPasswordUser && (
+                  <form onSubmit={handlePasswordReauthenticateAndRetry} className="text-left">
+                    <label className="block text-[10px] font-mono text-ledger-paper-dim uppercase tracking-wider mb-1.5">
+                      Enter Password
+                    </label>
+                    <div className="relative mb-3">
+                      <input
+                        type="password"
+                        value={reauthPassword}
+                        onChange={(e) => setReauthPassword(e.target.value)}
+                        disabled={reauthorizing}
+                        placeholder="••••••••"
+                        className="w-full h-10 px-3 pl-9 bg-ledger-dark border border-ledger-line text-ledger-paper rounded-xl text-xs font-sans focus:outline-none focus:border-ledger-coral/50 transition-colors"
+                      />
+                      <Lock className="w-4 h-4 text-ledger-paper-dim absolute left-3 top-3" />
+                    </div>
+                    <button
+                      type="submit"
+                      disabled={reauthorizing}
+                      className="w-full h-11 flex items-center justify-center gap-2 bg-ledger-coral hover:bg-ledger-coral/95 active:scale-98 transition-all text-ledger-dark font-sans font-bold text-xs rounded-xl shadow-md cursor-pointer disabled:opacity-50"
+                    >
+                      {reauthorizing ? (
+                        <span className="w-5 h-5 border-2 border-ledger-dark border-t-transparent rounded-full animate-spin"></span>
+                      ) : (
+                        <>
+                          <KeyRound className="w-4 h-4" />
+                          <span>Verify with Password</span>
+                        </>
+                      )}
+                    </button>
+                  </form>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowReauthModal(false);
+                    setDeletingAccount(false);
+                    setReauthError(null);
+                    setReauthPassword('');
+                  }}
+                  disabled={reauthorizing}
+                  className="w-full h-10 border border-ledger-line text-xs font-semibold rounded-xl text-ledger-paper-dim hover:text-ledger-paper hover:bg-ledger-slate-light active:scale-98 transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
     </div>
   );

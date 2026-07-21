@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { DayReflection } from '../types';
-import { BookOpen, Maximize2, Minimize2, Check, Loader2, Save, X, Mic, MicOff } from 'lucide-react';
+import { BookOpen, Maximize2, Minimize2, Check, Loader2, Save, X } from 'lucide-react';
 
 interface DailyReflectionSectionProps {
   selectedDateStr: string;
@@ -28,94 +28,6 @@ export default function DailyReflectionSection({
   const [modalNote, setModalNote] = useState('');
 
   const timerRef = useRef<NodeJS.Timeout | null>(null);
-  const recognitionRef = useRef<any>(null);
-  const [isListening, setIsListening] = useState(false);
-  const [isModalListening, setIsModalListening] = useState(false);
-
-  const startSpeechRecognition = (inModal: boolean) => {
-    const SpeechRecognitionClass = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognitionClass) {
-      alert('Voice-to-text is not supported in this browser. Please use Chrome or Safari.');
-      return;
-    }
-
-    try {
-      if (recognitionRef.current) {
-        recognitionRef.current.stop();
-      }
-
-      const rec = new SpeechRecognitionClass();
-      rec.continuous = true;
-      rec.interimResults = false;
-      rec.lang = 'en-US';
-
-      rec.onstart = () => {
-        if (inModal) {
-          setIsModalListening(true);
-        } else {
-          setIsListening(true);
-        }
-      };
-
-      rec.onresult = (event: any) => {
-        const transcript = Array.from(event.results)
-          .slice(event.resultIndex)
-          .map((result: any) => result[0].transcript)
-          .join('');
-
-        if (inModal) {
-          setModalNote(prev => {
-            const separator = prev.trim() ? ' ' : '';
-            return prev + separator + transcript;
-          });
-        } else {
-          setNote(prev => {
-            const separator = prev.trim() ? ' ' : '';
-            const nextVal = prev + separator + transcript;
-            handleNoteChange(nextVal);
-            return nextVal;
-          });
-        }
-      };
-
-      rec.onerror = (event: any) => {
-        console.error('Speech recognition error:', event.error);
-        stopSpeechRecognition();
-      };
-
-      rec.onend = () => {
-        setIsListening(false);
-        setIsModalListening(false);
-      };
-
-      recognitionRef.current = rec;
-      rec.start();
-    } catch (err) {
-      console.error('Failed to start speech recognition:', err);
-    }
-  };
-
-  const stopSpeechRecognition = () => {
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.stop();
-      } catch (e) {
-        console.error('Error stopping speech:', e);
-      }
-      recognitionRef.current = null;
-    }
-    setIsListening(false);
-    setIsModalListening(false);
-  };
-
-  // Clean up recognition on unmount
-  useEffect(() => {
-    return () => {
-      if (recognitionRef.current) {
-        recognitionRef.current.stop();
-      }
-    };
-  }, []);
 
   // Synchronize local note state when active date or database value changes
   useEffect(() => {
@@ -217,26 +129,6 @@ export default function DailyReflectionSection({
             </span>
           )}
 
-          {/* Voice-to-Text Button */}
-          <button
-            onClick={() => {
-              if (isListening) {
-                stopSpeechRecognition();
-              } else {
-                startSpeechRecognition(false);
-              }
-            }}
-            id="voice-reflection-btn"
-            className={`p-1 rounded-lg cursor-pointer transition-all ${
-              isListening 
-                ? 'bg-ledger-coral text-ledger-dark animate-pulse' 
-                : 'hover:bg-ledger-slate-light text-ledger-paper-dim hover:text-ledger-paper'
-            }`}
-            title={isListening ? 'Stop recording voice' : 'Start voice-to-text'}
-          >
-            {isListening ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
-          </button>
-
           {/* Expand Modal Trigger Icon */}
           <button
             onClick={() => {
@@ -292,34 +184,6 @@ export default function DailyReflectionSection({
                 <span className="font-mono text-[10px] text-ledger-paper-dim/60">
                   Date: {selectedDateStr}
                 </span>
-                <button
-                  onClick={() => {
-                    if (isModalListening) {
-                      stopSpeechRecognition();
-                    } else {
-                      startSpeechRecognition(true);
-                    }
-                  }}
-                  id="modal-voice-reflection-btn"
-                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-mono cursor-pointer transition-all ${
-                    isModalListening 
-                      ? 'bg-ledger-coral text-ledger-dark animate-pulse font-bold' 
-                      : 'bg-ledger-slate-light text-ledger-paper-dim hover:text-ledger-paper border border-ledger-line'
-                  }`}
-                  title={isModalListening ? 'Stop voice input' : 'Start voice-to-text'}
-                >
-                  {isModalListening ? (
-                    <>
-                      <MicOff className="w-3.5 h-3.5" />
-                      <span>Listening...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Mic className="w-3.5 h-3.5 text-ledger-coral" />
-                      <span>Voice-to-Text</span>
-                    </>
-                  )}
-                </button>
               </div>
               <textarea
                 value={modalNote}

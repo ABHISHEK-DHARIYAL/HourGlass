@@ -123,12 +123,15 @@ export default function WeeklyReviewView({ userId, tasks, completions, onBack }:
         const end = task.endHour;
         
         let h = start;
-        while (h !== end) {
+        let iterations = 0;
+        const targetEnd = end % 24;
+        while (h !== targetEnd && iterations < 24) {
           hourStats[h].total += 1;
           if (isDone) {
             hourStats[h].completed += 1;
           }
           h = (h + 1) % 24;
+          iterations++;
         }
       }
     });

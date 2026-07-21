@@ -3,10 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-const CACHE_NAME = 'ledger-cache-v1';
+const CACHE_NAME = 'hourglass-cache-v1';
 const ASSETS_TO_CACHE = [
   '/',
   '/index.html',
+  '/manifest.json',
+  '/icon.svg',
+  '/icon-maskable.svg',
   '/src/main.tsx',
   '/src/index.css',
   '/src/App.tsx',
@@ -50,6 +53,23 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
+  const url = new URL(event.request.url);
+  const isApiRequest = url.pathname.startsWith('/api/');
+
+  // For API endpoints, fetch from the network directly and never cache to avoid stale responses
+  if (isApiRequest) {
+    event.respondWith(
+      fetch(event.request).catch(() => {
+        return new Response(JSON.stringify({ error: 'Offline - API not available' }), {
+          status: 503,
+          statusText: 'Service Unavailable',
+          headers: new Headers({ 'Content-Type': 'application/json' })
+        });
+      })
+    );
+    return;
+  }
+
   event.respondWith(
     fetch(event.request)
       .then((response) => {
@@ -84,24 +104,26 @@ self.addEventListener('fetch', (event) => {
 
 // Push Event - Receive notification from backend
 self.addEventListener('push', (event) => {
-  let data = { title: 'Ledger Alert', body: 'You have an upcoming task!' };
+  let data = { title: 'Hourglass Alert', body: 'You have an upcoming task!' };
   
   if (event.data) {
     try {
       data = event.data.json();
     } catch (e) {
-      data = { title: 'Ledger Alert', body: event.data.text() };
+      data = { title: 'Hourglass Alert', body: event.data.text() };
     }
   }
 
   const options = {
     body: data.body,
-    icon: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=192&h=192&q=80',
-    badge: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=192&h=192&q=80',
+    icon: '/icon-maskable.svg',
+    badge: '/icon.svg',
     vibrate: [100, 50, 100],
+    actions: data.actions || [],
     data: {
       dateOfArrival: Date.now(),
-      primaryKey: 1
+      primaryKey: 1,
+      actions: data.actions || []
     }
   };
 
@@ -113,18 +135,43 @@ self.addEventListener('push', (event) => {
 // Notification Click Event
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
+  const clickedAction = event.action;
 
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windowClients) => {
       // Focus if window already open
+      let clientFocused = null;
       for (const client of windowClients) {
         if ('focus' in client) {
-          return client.focus();
+          clientFocused = client;
+          break;
         }
       }
-      // If not, open new window
+
+      if (clientFocused) {
+        if (clickedAction && clientFocused.postMessage) {
+          clientFocused.postMessage({
+            type: 'NOTIFICATION_ACTION_CLICK',
+            action: clickedAction
+          });
+        }
+        return clientFocused.focus();
+      }
+
       if (clients.openWindow) {
-        return clients.openWindow('/');
+        return clients.openWindow('/').then((newClient) => {
+          if (newClient && clickedAction) {
+            // Allow a small window delay for initialization
+            setTimeout(() => {
+              if (newClient.postMessage) {
+                newClient.postMessage({
+                  type: 'NOTIFICATION_ACTION_CLICK',
+                  action: clickedAction
+                });
+              }
+            }, 3000);
+          }
+        });
       }
     })
   );

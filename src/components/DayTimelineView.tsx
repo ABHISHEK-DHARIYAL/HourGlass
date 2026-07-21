@@ -100,9 +100,12 @@ export default function DayTimelineView({
     const busy = new Set<number>();
     activeSegments.forEach(seg => {
       let h = seg.startHour;
-      while (h !== seg.endHour) {
+      let iterations = 0;
+      const targetEnd = seg.endHour % 24;
+      while (h !== targetEnd && iterations < 24) {
         busy.add(h);
         h = (h + 1) % 24;
+        iterations++;
       }
     });
     return busy;

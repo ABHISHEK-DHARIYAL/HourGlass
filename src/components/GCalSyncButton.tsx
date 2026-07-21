@@ -132,9 +132,17 @@ export default function GCalSyncButton({ userId, selectedDateStr, tasks, onImpor
     try {
       let successCount = 0;
       for (const t of dayTasks) {
-        // Construct start and end dates
-        const startISO = new Date(`${selectedDateStr}T${String(t.startHour).padStart(2, '0')}:00:00`).toISOString();
-        const endISO = new Date(`${selectedDateStr}T${String(t.endHour).padStart(2, '0')}:00:00`).toISOString();
+        // Construct start and end dates with timezone and overnight-wrap safety
+        const startDate = new Date(`${selectedDateStr}T00:00:00`);
+        startDate.setHours(t.startHour);
+        const startISO = startDate.toISOString();
+
+        const endDate = new Date(`${selectedDateStr}T00:00:00`);
+        endDate.setHours(t.endHour);
+        if (t.endHour <= t.startHour) {
+          endDate.setDate(endDate.getDate() + 1);
+        }
+        const endISO = endDate.toISOString();
 
         const eventPayload = {
           summary: t.title,

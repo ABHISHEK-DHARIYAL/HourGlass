@@ -59,14 +59,25 @@ service cloud.firestore {
       allow write: if isAuthenticated() && (request.resource == null || request.resource.data.userId == request.auth.uid);
     }
 
-    // Rules for Subscriptions collection
-    match /subscriptions/{subId} {
-      allow read: if isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid);
-      allow write: if isAuthenticated() && (request.resource == null || request.resource.data.userId == request.auth.uid);
+    // Rules for Users collection
+    match /users/{userId} {
+      allow read, write: if isAuthenticated() && userId == request.auth.uid;
     }
 
     // Rules for Categories collection
     match /categories/{categoryId} {
+      allow read: if isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid);
+      allow write: if isAuthenticated() && (request.resource == null || request.resource.data.userId == request.auth.uid);
+    }
+
+    // Rules for Habits collection
+    match /habits/{habitId} {
+      allow read: if isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid);
+      allow write: if isAuthenticated() && (request.resource == null || request.resource.data.userId == request.auth.uid);
+    }
+
+    // Rules for Habit History collection
+    match /habit_history/{historyId} {
       allow read: if isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid);
       allow write: if isAuthenticated() && (request.resource == null || request.resource.data.userId == request.auth.uid);
     }

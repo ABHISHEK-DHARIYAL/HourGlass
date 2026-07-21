@@ -6,7 +6,7 @@
 import React, { useState, useEffect } from 'react';
 import { Task, Recurrence, TaskException, ExceptionType, TaskCategory } from '../types';
 import { formatHourLabel, getTaskSegmentsForDate } from '../utils/dateUtils';
-import { Trash2, X, Bell, BellOff, Calendar, AlertCircle, Sparkles, Star, Mic, MicOff, Tag } from 'lucide-react';
+import { Trash2, X, Bell, BellOff, Calendar, AlertCircle, Sparkles, Star, Tag } from 'lucide-react';
 
 interface TaskEditorModalProps {
   isOpen: boolean;
@@ -56,6 +56,7 @@ export default function TaskEditorModal({
   const [color, setColor] = useState(PALETTE_COLORS[0].value);
   const [categoryId, setCategoryId] = useState<string>('');
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
   
   const handleCategoryChange = (catId: string) => {
     setCategoryId(catId);
@@ -70,75 +71,13 @@ export default function TaskEditorModal({
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showSaveChoices, setShowSaveChoices] = useState(false);
 
-  const [isListeningNatural, setIsListeningNatural] = useState(false);
-  const [isListeningTitle, setIsListeningTitle] = useState(false);
-
-  const startDictation = (target: 'natural' | 'title') => {
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      alert("Speech recognition is not supported in this browser. Please try Chrome or Safari.");
-      return;
-    }
-
-    if (target === 'natural' && isListeningNatural) {
-      setIsListeningNatural(false);
-      return;
-    }
-    if (target === 'title' && isListeningTitle) {
-      setIsListeningTitle(false);
-      return;
-    }
-
-    const recognition = new SpeechRecognition();
-    recognition.continuous = false;
-    recognition.interimResults = false;
-    recognition.lang = 'en-US';
-
-    recognition.onstart = () => {
-      if (target === 'natural') {
-        setIsListeningNatural(true);
-        setIsListeningTitle(false);
-      } else {
-        setIsListeningTitle(true);
-        setIsListeningNatural(false);
-      }
-    };
-
-    recognition.onresult = (event: any) => {
-      const transcript = event.results[0][0].transcript;
-      if (transcript) {
-        if (target === 'natural') {
-          setNaturalInput(transcript);
-        } else {
-          setTitle(transcript);
-        }
-      }
-    };
-
-    recognition.onerror = (event: any) => {
-      console.error('Speech recognition error:', event.error);
-      setIsListeningNatural(false);
-      setIsListeningTitle(false);
-    };
-
-    recognition.onend = () => {
-      setIsListeningNatural(false);
-      setIsListeningTitle(false);
-    };
-
-    try {
-      recognition.start();
-    } catch (e) {
-      console.error('Error starting recognition:', e);
-    }
-  };
-
   // Sync state with edit mode or default values when opening
   useEffect(() => {
     if (isOpen) {
       setShowDeleteConfirm(false);
       setShowSaveChoices(false);
       setNaturalInput('');
+      setIsSaving(false);
       
       if (taskToEdit) {
         setTitle(taskToEdit.title);
@@ -283,10 +222,16 @@ export default function TaskEditorModal({
 
   const handleTriggerSave = (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSaving) return;
     setValidationError(null);
 
     if (!title.trim()) {
       setValidationError('Please enter a title for this hour block.');
+      return;
+    }
+
+    if (startHour === endHour) {
+      setValidationError('Start Hour and End Hour cannot be the same.');
       return;
     }
 
@@ -298,37 +243,56 @@ export default function TaskEditorModal({
     }
   };
 
-  const handleFinalSave = (option: 'one' | 'all') => {
-    if (option === 'one' && taskToEdit && onSaveException) {
-      // Create/update exception
-      const exceptionId = `${taskToEdit.id}_${selectedDateStr}`;
-      onSaveException({
-        id: exceptionId,
-        taskId: taskToEdit.id,
-        date: selectedDateStr,
-        type: ExceptionType.MODIFIED,
-        overrideTitle: title.trim(),
-        overrideStartHour: startHour,
-        overrideEndHour: endHour,
-        overrideNotes: notes.trim(),
-        overrideCategoryColor: color,
-        overridePriority: priority
-      });
-      onClose();
-    } else {
-      // Standard save
-      onSave({
-        title: title.trim(),
-        notes: notes.trim() || '',
-        startHour,
-        endHour,
-        anchorDate,
-        recurrence,
-        notifyEnabled,
-        priority,
-        color,
-        categoryId
-      });
+  const handleFinalSave = async (option: 'one' | 'all') => {
+    if (isSaving) return;
+    setIsSaving(true);
+    setValidationError(null);
+    try {
+      if (option === 'one' && taskToEdit && onSaveException) {
+        // Create/update exception
+        const exceptionId = `${taskToEdit.id}_${selectedDateStr}`;
+        await onSaveException({
+          id: exceptionId,
+          taskId: taskToEdit.id,
+          date: selectedDateStr,
+          type: ExceptionType.MODIFIED,
+          overrideTitle: title.trim(),
+          overrideStartHour: startHour,
+          overrideEndHour: endHour,
+          overrideNotes: notes.trim(),
+          overrideCategoryColor: color,
+          overridePriority: priority
+        });
+        // Clear/Reset Form State on success
+        setTitle('');
+        setNotes('');
+        setNaturalInput('');
+        onClose();
+      } else {
+        // Standard save
+        await onSave({
+          title: title.trim(),
+          notes: notes.trim() || '',
+          startHour,
+          endHour,
+          anchorDate,
+          recurrence,
+          notifyEnabled,
+          priority,
+          color,
+          categoryId
+        });
+        // Clear/Reset Form State on success
+        setTitle('');
+        setNotes('');
+        setNaturalInput('');
+        onClose();
+      }
+    } catch (err: any) {
+      console.error('Error saving task block:', err);
+      setValidationError(err?.message || 'Failed to save task. Please try again.');
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -379,20 +343,8 @@ export default function TaskEditorModal({
                     placeholder="e.g. Gym 7am-8am daily or Coffee at 3pm"
                     value={naturalInput}
                     onChange={(e) => setNaturalInput(e.target.value)}
-                    className="w-full bg-ledger-dark border border-ledger-line rounded-lg text-xs pl-2.5 pr-8 py-1.5 text-ledger-paper placeholder-ledger-paper-dim/30 focus:outline-none focus:border-ledger-coral font-sans"
+                    className="w-full bg-ledger-dark border border-ledger-line rounded-lg text-xs px-2.5 py-1.5 text-ledger-paper placeholder-ledger-paper-dim/30 focus:outline-none focus:border-ledger-coral font-sans"
                   />
-                  <button
-                    type="button"
-                    onClick={() => startDictation('natural')}
-                    className={`absolute right-2 p-1 rounded-full transition-all cursor-pointer ${
-                      isListeningNatural 
-                        ? 'text-ledger-coral bg-ledger-coral/15 animate-pulse' 
-                        : 'text-ledger-paper-dim/40 hover:text-ledger-coral'
-                    }`}
-                    title="Dictate with voice"
-                  >
-                    {isListeningNatural ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
-                  </button>
                 </div>
                 <button
                   type="button"
@@ -433,20 +385,8 @@ export default function TaskEditorModal({
                 placeholder="e.g. Sleep, Deep Work, Workout"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
-                className="w-full h-11 pl-3 pr-10 bg-ledger-dark border border-ledger-line rounded-xl text-ledger-paper placeholder-ledger-paper-dim/30 focus:outline-none focus:border-ledger-coral transition-colors font-sans"
+                className="w-full h-11 px-3 bg-ledger-dark border border-ledger-line rounded-xl text-ledger-paper placeholder-ledger-paper-dim/30 focus:outline-none focus:border-ledger-coral transition-colors font-sans"
               />
-              <button
-                type="button"
-                onClick={() => startDictation('title')}
-                className={`absolute right-3 p-1.5 rounded-full transition-all cursor-pointer ${
-                  isListeningTitle 
-                    ? 'text-ledger-coral bg-ledger-coral/15 animate-pulse' 
-                    : 'text-ledger-paper-dim/40 hover:text-ledger-coral'
-                }`}
-                title="Dictate title with voice"
-              >
-                {isListeningTitle ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-              </button>
             </div>
           </div>
 
@@ -625,23 +565,26 @@ export default function TaskEditorModal({
               <div className="flex gap-2">
                 <button
                   type="button"
+                  disabled={isSaving}
                   onClick={() => handleFinalSave('one')}
-                  className="flex-1 h-11 bg-ledger-slate-light border border-ledger-line text-xs font-semibold rounded-lg text-ledger-paper hover:bg-ledger-slate-light/90 active:scale-98 transition-colors cursor-pointer"
+                  className="flex-1 h-11 bg-ledger-slate-light border border-ledger-line text-xs font-semibold rounded-lg text-ledger-paper hover:bg-ledger-slate-light/90 active:scale-98 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  Save Only for Today
+                  {isSaving ? 'Saving...' : 'Save Only for Today'}
                 </button>
                 <button
                   type="button"
+                  disabled={isSaving}
                   onClick={() => handleFinalSave('all')}
-                  className="flex-1 h-11 bg-ledger-coral/20 border border-ledger-coral/40 text-xs font-semibold rounded-lg text-ledger-coral hover:bg-ledger-coral/30 active:scale-98 transition-colors cursor-pointer"
+                  className="flex-1 h-11 bg-ledger-coral/20 border border-ledger-coral/40 text-xs font-semibold rounded-lg text-ledger-coral hover:bg-ledger-coral/30 active:scale-98 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  Save for All Occurrences
+                  {isSaving ? 'Saving...' : 'Save for All Occurrences'}
                 </button>
               </div>
               <button
                 type="button"
+                disabled={isSaving}
                 onClick={() => setShowSaveChoices(false)}
-                className="text-center text-[10px] font-sans text-ledger-paper-dim/80 underline cursor-pointer hover:text-ledger-paper mt-1"
+                className="text-center text-[10px] font-sans text-ledger-paper-dim/80 underline cursor-pointer hover:text-ledger-paper mt-1 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Go Back
               </button>
@@ -686,6 +629,7 @@ export default function TaskEditorModal({
               {taskToEdit && onDelete && (
                 <button
                   type="button"
+                  disabled={isSaving}
                   onClick={() => {
                     if (recurrence !== Recurrence.NONE) {
                       setShowDeleteConfirm(true);
@@ -693,7 +637,7 @@ export default function TaskEditorModal({
                       onDelete(taskToEdit.id, 'all');
                     }
                   }}
-                  className="w-12 h-12 shrink-0 flex items-center justify-center bg-ledger-slate border border-ledger-line hover:bg-ledger-coral/10 hover:text-ledger-coral transition-colors text-ledger-paper-dim rounded-xl cursor-pointer active:scale-95"
+                  className="w-12 h-12 shrink-0 flex items-center justify-center bg-ledger-slate border border-ledger-line hover:bg-ledger-coral/10 hover:text-ledger-coral transition-colors text-ledger-paper-dim rounded-xl cursor-pointer active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
                   title="Delete item"
                 >
                   <Trash2 className="w-5 h-5" />
@@ -702,17 +646,19 @@ export default function TaskEditorModal({
 
               <button
                 type="button"
+                disabled={isSaving}
                 onClick={onClose}
-                className="flex-1 h-12 bg-ledger-slate-light hover:bg-ledger-slate-light/90 border border-ledger-line rounded-xl text-ledger-paper font-sans font-semibold text-sm cursor-pointer transition-colors active:scale-98"
+                className="flex-1 h-12 bg-ledger-slate-light hover:bg-ledger-slate-light/90 border border-ledger-line rounded-xl text-ledger-paper font-sans font-semibold text-sm cursor-pointer transition-colors active:scale-98 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Cancel
               </button>
 
               <button
                 type="submit"
-                className="flex-1 h-12 bg-ledger-coral hover:bg-ledger-coral/95 text-ledger-dark rounded-xl font-sans font-bold text-sm cursor-pointer transition-colors active:scale-98"
+                disabled={isSaving}
+                className="flex-1 h-12 bg-ledger-coral hover:bg-ledger-coral/95 text-ledger-dark rounded-xl font-sans font-bold text-sm cursor-pointer transition-colors active:scale-98 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Save Block
+                {isSaving ? 'Saving...' : 'Save Block'}
               </button>
             </div>
           )}

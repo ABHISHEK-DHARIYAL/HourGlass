@@ -17,10 +17,13 @@ import {
   deleteDoc,
   doc,
   setDoc,
-  User
+  User,
+  messaging
 } from './firebase';
+import { onMessage } from 'firebase/messaging';
 import { Task, Recurrence, TaskException, TaskCompletion, MustDoItem, TaskTemplate, ExceptionType, CompletionStatus, TodoItem, DayReflection, DailyGoal, Habit, HabitHistory, TaskCategory } from './types';
 import { formatDate, parseLocalDate, addDays, getTaskSegmentsForDate, formatHourLabel } from './utils/dateUtils';
+import { logDebug } from './utils/debugLogger';
 import LoginScreen from './components/LoginScreen';
 import MonthView from './components/MonthView';
 import DayTimelineView from './components/DayTimelineView';
@@ -40,7 +43,10 @@ import TodoListPage from './components/TodoListPage';
 import DailyReflectionSection from './components/DailyReflectionSection';
 import DailyGoalInput from './components/DailyGoalInput';
 import FocusModeView from './components/FocusModeView';
-import { motion } from 'motion/react';
+import { motion, AnimatePresence } from 'motion/react';
+import { getAllFromStore, putToStore, clearStore, deleteFromStore } from './utils/offlineStore';
+import { queueOfflineWrite, subscribeToSyncStatus, triggerSync, SyncStatus } from './utils/offlineSyncManager';
+import { useNotifications } from './hooks/useNotifications';
 import { 
   Hourglass, 
   Settings, 
@@ -107,7 +113,16 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(true);
   
   // Real-time Firestore Collections States
-  const [tasks, setTasks] = useState<Task[]>([]);
+  const [tasks, rawSetTasks] = useState<Task[]>([]);
+  const setTasks = (updater: Task[] | ((prev: Task[]) => Task[])) => {
+    rawSetTasks(prev => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      logDebug(`[setTasks] State update count: ${prev.length} -> ${next.length}`);
+      logDebug(`[setTasks] State before update: ${JSON.stringify(prev.map(t => ({ id: t.id, title: t.title, userId: t.userId, anchorDate: t.anchorDate, recurrence: t.recurrence })))}`);
+      logDebug(`[setTasks] State after update: ${JSON.stringify(next.map(t => ({ id: t.id, title: t.title, userId: t.userId, anchorDate: t.anchorDate, recurrence: t.recurrence })))}`);
+      return next;
+    });
+  };
   const [exceptions, setExceptions] = useState<TaskException[]>([]);
   const [completions, setCompletions] = useState<TaskCompletion[]>([]);
   const [mustdos, setMustdos] = useState<MustDoItem[]>([]);
@@ -119,6 +134,85 @@ export default function App() {
   const [habitHistory, setHabitHistory] = useState<HabitHistory[]>([]);
   const [categories, setCategories] = useState<TaskCategory[]>([]);
   const [showConfetti, setShowConfetti] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>('Synced');
+  const [isCacheLoaded, setIsCacheLoaded] = useState(false);
+
+  // Subscribe to sync status updates
+  useEffect(() => {
+    return subscribeToSyncStatus((status) => {
+      setSyncStatus(status);
+    });
+  }, []);
+
+  // Load initial cached data from IndexedDB on startup
+  useEffect(() => {
+    if (!user) {
+      setIsCacheLoaded(false);
+      return;
+    }
+    const loadCachedData = async () => {
+      console.log('[StartupCache] Load initiated for user:', user.uid);
+      try {
+        const [
+          cachedTasks,
+          cachedExceptions,
+          cachedCompletions,
+          cachedMustdos,
+          cachedTemplates,
+          cachedTodos,
+          cachedReflections,
+          cachedDailyGoals,
+          cachedHabits,
+          cachedHabitHistory,
+          cachedCategories
+        ] = await Promise.all([
+          getAllFromStore<Task>('tasks'),
+          getAllFromStore<TaskException>('exceptions'),
+          getAllFromStore<TaskCompletion>('completions'),
+          getAllFromStore<MustDoItem>('mustdos'),
+          getAllFromStore<TaskTemplate>('templates'),
+          getAllFromStore<TodoItem>('todos'),
+          getAllFromStore<DayReflection>('day_reflections'),
+          getAllFromStore<DailyGoal>('daily_goals'),
+          getAllFromStore<Habit>('habits'),
+          getAllFromStore<HabitHistory>('habit_history'),
+          getAllFromStore<TaskCategory>('categories')
+        ]);
+
+        console.log('[StartupCache] Loaded sizes from IndexedDB:', {
+          tasks: cachedTasks.length,
+          exceptions: cachedExceptions.length,
+          completions: cachedCompletions.length,
+          mustdos: cachedMustdos.length,
+          templates: cachedTemplates.length,
+          todos: cachedTodos.length,
+          reflections: cachedReflections.length,
+          dailyGoals: cachedDailyGoals.length,
+          habits: cachedHabits.length,
+          habitHistory: cachedHabitHistory.length,
+          categories: cachedCategories.length
+        });
+
+        if (cachedTasks.length > 0) setTasks(cachedTasks);
+        if (cachedExceptions.length > 0) setExceptions(cachedExceptions);
+        if (cachedCompletions.length > 0) setCompletions(cachedCompletions);
+        if (cachedMustdos.length > 0) setMustdos(cachedMustdos);
+        if (cachedTemplates.length > 0) setTemplates(cachedTemplates);
+        if (cachedTodos.length > 0) setTodos(cachedTodos);
+        if (cachedReflections.length > 0) setReflections(cachedReflections);
+        if (cachedDailyGoals.length > 0) setDailyGoals(cachedDailyGoals);
+        if (cachedHabits.length > 0) setHabits(cachedHabits);
+        if (cachedHabitHistory.length > 0) setHabitHistory(cachedHabitHistory);
+        if (cachedCategories.length > 0) setCategories(cachedCategories);
+      } catch (err) {
+        console.warn('[StartupCache] Failed to load initial offline IndexedDB cache:', err);
+      } finally {
+        setIsCacheLoaded(true);
+        console.log('[StartupCache] Initial cache load completed. isCacheLoaded marked true.');
+      }
+    };
+    loadCachedData();
+  }, [user]);
 
   const [selectedDateStr, setSelectedDateStr] = useState<string>(formatDate(new Date()));
   const [isEditorOpen, setIsEditorOpen] = useState(false);
@@ -126,7 +220,12 @@ export default function App() {
   const [defaultStartHour, setDefaultStartHour] = useState(9);
   const [showSettings, setShowSettings] = useState(false);
   const [viewMode, setViewMode] = useState<'both' | 'month' | 'day' | 'review' | 'clock' | 'todos'>('month');
-  const [quote, setQuote] = useState<{ text: string; author: string } | null>(null);
+  const [quote, setQuote] = useState<{ text: string; author: string }>(() => {
+    return {
+      text: "The key is not to prioritize what's on your schedule, but to schedule your priorities.",
+      author: "Stephen Covey"
+    };
+  });
   const [searchQuery, setSearchQuery] = useState('');
   const [focusMode, setFocusMode] = useState<boolean>(() => {
     return localStorage.getItem('hourglass_focus_mode') === 'true';
@@ -150,14 +249,149 @@ export default function App() {
   // Fetch inspirational quote
   useEffect(() => {
     fetch('/api/quote')
-      .then(res => res.json())
+      .then(res => {
+        if (!res.ok) {
+          throw new Error('Network response was not ok');
+        }
+        return res.json();
+      })
       .then(data => {
-        if (data && data.text) {
+        if (data && data.text && data.author) {
           setQuote(data);
         }
       })
-      .catch(err => console.warn('Failed to fetch quote:', err));
+      .catch(err => {
+        console.warn('Failed to fetch quote:', err);
+        // Fallback is already loaded as the initial state
+      });
   }, []);
+
+  // Wrapper handlers for the useNotifications engine
+  const handleSaveCompletionDirect = async (comp: TaskCompletion) => {
+    if (!user) return;
+    if (user.uid === 'guest_user') {
+      const updatedList = [
+        ...completions.filter(c => c.id !== comp.id),
+        comp
+      ];
+      saveGuestCompletions(updatedList);
+      return;
+    }
+    try {
+      const updatedComp = {
+        ...comp,
+        userId: user.uid,
+        updatedAt: new Date().toISOString()
+      };
+      setCompletions(prev => [...prev.filter(c => c.id !== comp.id), updatedComp]); // Optimistic update
+      await queueOfflineWrite(user.uid, 'completions', comp.id, 'set', updatedComp);
+    } catch (err) {
+      console.error('Failed to save completion direct:', err);
+    }
+  };
+
+  const handleSaveExceptionDirect = async (exc: TaskException) => {
+    if (!user) return;
+    if (user.uid === 'guest_user') {
+      const updatedList = [
+        ...exceptions.filter(e => e.id !== exc.id),
+        exc
+      ];
+      saveGuestExceptions(updatedList);
+      return;
+    }
+    try {
+      const updatedExc = {
+        ...exc,
+        userId: user.uid
+      };
+      setExceptions(prev => [...prev.filter(e => e.id !== exc.id), updatedExc]); // Optimistic update
+      await queueOfflineWrite(user.uid, 'exceptions', exc.id, 'set', updatedExc);
+    } catch (err) {
+      console.error('Failed to save exception direct:', err);
+    }
+  };
+
+  const handleSaveTaskDirect = async (tData: Partial<Task>) => {
+    if (!user) return;
+    const tId = tData.id;
+    if (!tId) return;
+    
+    if (user.uid === 'guest_user') {
+      const updatedList = tasks.map(t => t.id === tId ? { ...t, ...tData, updatedAt: new Date().toISOString() } : t);
+      saveGuestTasks(updatedList);
+      return;
+    }
+    try {
+      setTasks(prev => prev.map(t => t.id === tId ? { ...t, ...tData, updatedAt: new Date().toISOString() } : t)); // Optimistic update
+      const existingTask = tasks.find(t => t.id === tId) || {};
+      const updatedTask = {
+        ...existingTask,
+        ...tData,
+        userId: user.uid,
+        updatedAt: new Date().toISOString()
+      };
+      await queueOfflineWrite(user.uid, 'tasks', tId, 'set', updatedTask);
+    } catch (err) {
+      console.error('Failed to save task direct:', err);
+    }
+  };
+
+  const {
+    activeNotifications,
+    handleDismissNotification,
+    handleExecuteNotificationAction
+  } = useNotifications({
+    userId: user?.uid || '',
+    tasks,
+    exceptions,
+    completions,
+    habits,
+    habitHistory,
+    onSaveCompletion: handleSaveCompletionDirect,
+    onSaveException: handleSaveExceptionDirect,
+    onSaveTask: handleSaveTaskDirect,
+    onToggleHabit: handleToggleHabit
+  });
+
+  // Listen to background service worker events for system notification actions click
+  useEffect(() => {
+    if (!('serviceWorker' in navigator)) return;
+
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data && event.data.type === 'NOTIFICATION_ACTION_CLICK') {
+        const action = event.data.action;
+        handleExecuteNotificationAction(`bg_push_${Date.now()}`, action);
+      }
+    };
+
+    navigator.serviceWorker.addEventListener('message', handleMessage);
+    return () => {
+      navigator.serviceWorker.removeEventListener('message', handleMessage);
+    };
+  }, [handleExecuteNotificationAction]);
+
+  // Listen to foreground FCM notifications
+  useEffect(() => {
+    if (!messaging) return;
+
+    const unsubscribe = onMessage(messaging, (payload) => {
+      console.log('Received foreground FCM message:', payload);
+      const title = payload.notification?.title || payload.data?.title || 'Hourglass Notification';
+      const body = payload.notification?.body || payload.data?.body || '';
+      
+      if (Notification.permission === 'granted') {
+        new Notification(title, {
+          body,
+          icon: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=192&h=192&q=80'
+        });
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [messaging]);
 
   // Copying state & UI inputs
   const [showCopyDayDialog, setShowCopyDayDialog] = useState(false);
@@ -168,13 +402,15 @@ export default function App() {
 
   // Listen for Auth changes
   useEffect(() => {
-    // Check if guest user session is stored in localStorage
-    const savedGuest = localStorage.getItem('hourglass_guest_user');
-    if (savedGuest) {
-      setUser(JSON.parse(savedGuest));
+    const isGuest = localStorage.getItem('hourglass_guest_user') === 'true';
+    if (isGuest) {
+      setUser({
+        uid: 'guest_user',
+        displayName: 'Guest User',
+        email: 'guest@example.com',
+        photoURL: null,
+      } as User);
       setAuthLoading(false);
-      setViewMode('month');
-      setShowSettings(false);
       return;
     }
 
@@ -189,7 +425,7 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // Guest save helpers to synchronize state and localStorage
+  // Guest Storage Helpers
   const saveGuestTasks = (newList: Task[]) => {
     setTasks(newList);
     localStorage.setItem('hourglass_tasks', JSON.stringify(newList));
@@ -237,8 +473,8 @@ export default function App() {
 
   // Set up real-time listener for tasks
   useEffect(() => {
-    if (!user) {
-      setTasks([]);
+    if (!user || !isCacheLoaded) {
+      if (!user) setTasks([]);
       return;
     }
     if (user.uid === 'guest_user') {
@@ -246,22 +482,36 @@ export default function App() {
       setTasks(stored ? JSON.parse(stored) : []);
       return;
     }
+    logDebug(`[onSnapshot] Subscribing to tasks collection for user: userId="${user.uid}"`);
     const q = query(collection(db, 'tasks'), where('userId', '==', user.uid));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const list: Task[] = [];
-      snapshot.forEach((doc) => {
-        const data = doc.data();
-        list.push({ id: doc.id, ...data } as Task);
+      logDebug(`[onSnapshot] snapshot_received: collection=tasks, size=${snapshot.size}, fromCache=${snapshot.metadata.fromCache}, hasPendingWrites=${snapshot.metadata.hasPendingWrites}`);
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data();
+        logDebug(`[onSnapshot] snapshot_item: docId="${docSnap.id}", userId="${data.userId}", title="${data.title}", anchorDate="${data.anchorDate}", recurrence="${data.recurrence}"`);
+        list.push({ id: docSnap.id, ...data } as Task);
       });
+      logDebug(`[onSnapshot] Snapshot processing complete: listCount=${list.length}`);
       setTasks(list);
-    }, (err) => console.error('Tasks listener error:', err));
+      clearStore('tasks').then(() => {
+        logDebug('[onSnapshot] Local IndexedDB tasks store cleared for overwrite.');
+        list.forEach(item => {
+          putToStore('tasks', item).then(() => {
+            logDebug(`[onSnapshot] Local IndexedDB tasks cache put succeeded: id="${item.id}"`);
+          });
+        });
+      });
+    }, (err: any) => {
+      logDebug(`[onSnapshot] [ERROR] Tasks listener error: ${err?.message || err}`, 'ERROR');
+    });
     return () => unsubscribe();
-  }, [user]);
+  }, [user, isCacheLoaded]);
 
   // Set up real-time listener for exceptions
   useEffect(() => {
-    if (!user) {
-      setExceptions([]);
+    if (!user || !isCacheLoaded) {
+      if (!user) setExceptions([]);
       return;
     }
     if (user.uid === 'guest_user') {
@@ -269,22 +519,27 @@ export default function App() {
       setExceptions(stored ? JSON.parse(stored) : []);
       return;
     }
+    console.log('[Firestore] Subscribing to exceptions collection for user:', user.uid);
     const q = query(collection(db, 'exceptions'), where('userId', '==', user.uid));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const list: TaskException[] = [];
-      snapshot.forEach((doc) => {
-        const data = doc.data();
-        list.push({ id: doc.id, ...data } as TaskException);
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data();
+        list.push({ id: docSnap.id, ...data } as TaskException);
       });
+      console.log(`[Firestore] Snapshot received: exceptions count = ${list.length}`);
       setExceptions(list);
-    }, (err) => console.error('Exceptions listener error:', err));
+      clearStore('exceptions').then(() => {
+        list.forEach(item => putToStore('exceptions', item));
+      });
+    }, (err) => console.error('[Firestore] Exceptions listener error:', err));
     return () => unsubscribe();
-  }, [user]);
+  }, [user, isCacheLoaded]);
 
   // Set up real-time listener for completions
   useEffect(() => {
-    if (!user) {
-      setCompletions([]);
+    if (!user || !isCacheLoaded) {
+      if (!user) setCompletions([]);
       return;
     }
     if (user.uid === 'guest_user') {
@@ -292,22 +547,27 @@ export default function App() {
       setCompletions(stored ? JSON.parse(stored) : []);
       return;
     }
+    console.log('[Firestore] Subscribing to completions collection for user:', user.uid);
     const q = query(collection(db, 'completions'), where('userId', '==', user.uid));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const list: TaskCompletion[] = [];
-      snapshot.forEach((doc) => {
-        const data = doc.data();
-        list.push({ id: doc.id, ...data } as TaskCompletion);
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data();
+        list.push({ id: docSnap.id, ...data } as TaskCompletion);
       });
+      console.log(`[Firestore] Snapshot received: completions count = ${list.length}`);
       setCompletions(list);
-    }, (err) => console.error('Completions listener error:', err));
+      clearStore('completions').then(() => {
+        list.forEach(item => putToStore('completions', item));
+      });
+    }, (err) => console.error('[Firestore] Completions listener error:', err));
     return () => unsubscribe();
-  }, [user]);
+  }, [user, isCacheLoaded]);
 
   // Set up real-time listener for daily must-dos
   useEffect(() => {
-    if (!user) {
-      setMustdos([]);
+    if (!user || !isCacheLoaded) {
+      if (!user) setMustdos([]);
       return;
     }
     if (user.uid === 'guest_user') {
@@ -315,22 +575,27 @@ export default function App() {
       setMustdos(stored ? JSON.parse(stored) : []);
       return;
     }
+    console.log('[Firestore] Subscribing to mustdos collection for user:', user.uid);
     const q = query(collection(db, 'mustdos'), where('userId', '==', user.uid));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const list: MustDoItem[] = [];
-      snapshot.forEach((doc) => {
-        const data = doc.data();
-        list.push({ id: doc.id, ...data } as MustDoItem);
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data();
+        list.push({ id: docSnap.id, ...data } as MustDoItem);
       });
+      console.log(`[Firestore] Snapshot received: mustdos count = ${list.length}`);
       setMustdos(list);
-    }, (err) => console.error('Must-dos listener error:', err));
+      clearStore('mustdos').then(() => {
+        list.forEach(item => putToStore('mustdos', item));
+      });
+    }, (err) => console.error('[Firestore] Must-dos listener error:', err));
     return () => unsubscribe();
-  }, [user]);
+  }, [user, isCacheLoaded]);
 
   // Set up real-time listener for templates
   useEffect(() => {
-    if (!user) {
-      setTemplates([]);
+    if (!user || !isCacheLoaded) {
+      if (!user) setTemplates([]);
       return;
     }
     if (user.uid === 'guest_user') {
@@ -338,22 +603,27 @@ export default function App() {
       setTemplates(stored ? JSON.parse(stored) : []);
       return;
     }
+    console.log('[Firestore] Subscribing to templates collection for user:', user.uid);
     const q = query(collection(db, 'templates'), where('userId', '==', user.uid));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const list: TaskTemplate[] = [];
-      snapshot.forEach((doc) => {
-        const data = doc.data();
-        list.push({ id: doc.id, ...data } as TaskTemplate);
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data();
+        list.push({ id: docSnap.id, ...data } as TaskTemplate);
       });
+      console.log(`[Firestore] Snapshot received: templates count = ${list.length}`);
       setTemplates(list);
-    }, (err) => console.error('Templates listener error:', err));
+      clearStore('templates').then(() => {
+        list.forEach(item => putToStore('templates', item));
+      });
+    }, (err) => console.error('[Firestore] Templates listener error:', err));
     return () => unsubscribe();
-  }, [user]);
+  }, [user, isCacheLoaded]);
 
   // Set up real-time listener for todos
   useEffect(() => {
-    if (!user) {
-      setTodos([]);
+    if (!user || !isCacheLoaded) {
+      if (!user) setTodos([]);
       return;
     }
     if (user.uid === 'guest_user') {
@@ -361,22 +631,27 @@ export default function App() {
       setTodos(stored ? JSON.parse(stored) : []);
       return;
     }
+    console.log('[Firestore] Subscribing to todos collection for user:', user.uid);
     const q = query(collection(db, 'todos'), where('userId', '==', user.uid));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const list: TodoItem[] = [];
-      snapshot.forEach((doc) => {
-        const data = doc.data();
-        list.push({ id: doc.id, ...data } as TodoItem);
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data();
+        list.push({ id: docSnap.id, ...data } as TodoItem);
       });
+      console.log(`[Firestore] Snapshot received: todos count = ${list.length}`);
       setTodos(list);
-    }, (err) => console.error('Todos listener error:', err));
+      clearStore('todos').then(() => {
+        list.forEach(item => putToStore('todos', item));
+      });
+    }, (err) => console.error('[Firestore] Todos listener error:', err));
     return () => unsubscribe();
-  }, [user]);
+  }, [user, isCacheLoaded]);
 
   // Set up real-time listener for day_reflections
   useEffect(() => {
-    if (!user) {
-      setReflections([]);
+    if (!user || !isCacheLoaded) {
+      if (!user) setReflections([]);
       return;
     }
     if (user.uid === 'guest_user') {
@@ -384,22 +659,27 @@ export default function App() {
       setReflections(stored ? JSON.parse(stored) : []);
       return;
     }
+    console.log('[Firestore] Subscribing to day_reflections collection for user:', user.uid);
     const q = query(collection(db, 'day_reflections'), where('userId', '==', user.uid));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const list: DayReflection[] = [];
-      snapshot.forEach((doc) => {
-        const data = doc.data();
-        list.push({ id: doc.id, ...data } as DayReflection);
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data();
+        list.push({ id: docSnap.id, ...data } as DayReflection);
       });
+      console.log(`[Firestore] Snapshot received: day_reflections count = ${list.length}`);
       setReflections(list);
-    }, (err) => console.error('Day reflections listener error:', err));
+      clearStore('day_reflections').then(() => {
+        list.forEach(item => putToStore('day_reflections', item));
+      });
+    }, (err) => console.error('[Firestore] Day reflections listener error:', err));
     return () => unsubscribe();
-  }, [user]);
+  }, [user, isCacheLoaded]);
 
   // Set up real-time listener for daily_goals
   useEffect(() => {
-    if (!user) {
-      setDailyGoals([]);
+    if (!user || !isCacheLoaded) {
+      if (!user) setDailyGoals([]);
       return;
     }
     if (user.uid === 'guest_user') {
@@ -407,22 +687,27 @@ export default function App() {
       setDailyGoals(stored ? JSON.parse(stored) : []);
       return;
     }
+    console.log('[Firestore] Subscribing to daily_goals collection for user:', user.uid);
     const q = query(collection(db, 'daily_goals'), where('userId', '==', user.uid));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const list: DailyGoal[] = [];
-      snapshot.forEach((doc) => {
-        const data = doc.data();
-        list.push({ id: doc.id, ...data } as DailyGoal);
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data();
+        list.push({ id: docSnap.id, ...data } as DailyGoal);
       });
+      console.log(`[Firestore] Snapshot received: daily_goals count = ${list.length}`);
       setDailyGoals(list);
-    }, (err) => console.error('Daily goals listener error:', err));
+      clearStore('daily_goals').then(() => {
+        list.forEach(item => putToStore('daily_goals', item));
+      });
+    }, (err) => console.error('[Firestore] Daily goals listener error:', err));
     return () => unsubscribe();
-  }, [user]);
+  }, [user, isCacheLoaded]);
 
   // Set up real-time listener for habits
   useEffect(() => {
-    if (!user) {
-      setHabits([]);
+    if (!user || !isCacheLoaded) {
+      if (!user) setHabits([]);
       return;
     }
     if (user.uid === 'guest_user') {
@@ -430,22 +715,27 @@ export default function App() {
       setHabits(stored ? JSON.parse(stored) : []);
       return;
     }
+    console.log('[Firestore] Subscribing to habits collection for user:', user.uid);
     const q = query(collection(db, 'habits'), where('userId', '==', user.uid));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const list: Habit[] = [];
-      snapshot.forEach((doc) => {
-        const data = doc.data();
-        list.push({ id: doc.id, ...data } as Habit);
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data();
+        list.push({ id: docSnap.id, ...data } as Habit);
       });
+      console.log(`[Firestore] Snapshot received: habits count = ${list.length}`);
       setHabits(list);
-    }, (err) => console.error('Habits listener error:', err));
+      clearStore('habits').then(() => {
+        list.forEach(item => putToStore('habits', item));
+      });
+    }, (err) => console.error('[Firestore] Habits listener error:', err));
     return () => unsubscribe();
-  }, [user]);
+  }, [user, isCacheLoaded]);
 
   // Set up real-time listener for habit history
   useEffect(() => {
-    if (!user) {
-      setHabitHistory([]);
+    if (!user || !isCacheLoaded) {
+      if (!user) setHabitHistory([]);
       return;
     }
     if (user.uid === 'guest_user') {
@@ -453,46 +743,54 @@ export default function App() {
       setHabitHistory(stored ? JSON.parse(stored) : []);
       return;
     }
+    console.log('[Firestore] Subscribing to habit_history collection for user:', user.uid);
     const q = query(collection(db, 'habit_history'), where('userId', '==', user.uid));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const list: HabitHistory[] = [];
-      snapshot.forEach((doc) => {
-        const data = doc.data();
-        list.push({ id: doc.id, ...data } as HabitHistory);
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data();
+        list.push({ id: docSnap.id, ...data } as HabitHistory);
       });
+      console.log(`[Firestore] Snapshot received: habit_history count = ${list.length}`);
       setHabitHistory(list);
-    }, (err) => console.error('Habit history listener error:', err));
+      clearStore('habit_history').then(() => {
+        list.forEach(item => putToStore('habit_history', item));
+      });
+    }, (err) => console.error('[Firestore] Habit history listener error:', err));
     return () => unsubscribe();
-  }, [user]);
+  }, [user, isCacheLoaded]);
 
   // Set up real-time listener for categories
   useEffect(() => {
-    if (!user) {
-      setCategories([]);
+    if (!user || !isCacheLoaded) {
+      if (!user) setCategories([]);
       return;
     }
     if (user.uid === 'guest_user') {
       const stored = localStorage.getItem('hourglass_categories');
-      if (stored) {
-        setCategories(JSON.parse(stored));
-      } else {
+      const list = stored ? JSON.parse(stored) : [];
+      if (list.length === 0) {
         const seeded = DEFAULT_CATEGORIES.map(c => ({
           ...c,
-          userId: 'guest_user',
+          userId: user.uid,
           createdAt: new Date().toISOString()
         }));
-        localStorage.setItem('hourglass_categories', JSON.stringify(seeded));
-        setCategories(seeded);
+        saveGuestCategories(seeded);
+      } else {
+        list.sort((a: any, b: any) => (a.createdAt || '').localeCompare(b.createdAt || '') || a.id.localeCompare(b.id));
+        setCategories(list);
       }
       return;
     }
+    console.log('[Firestore] Subscribing to categories collection for user:', user.uid);
     const q = query(collection(db, 'categories'), where('userId', '==', user.uid));
     const unsubscribe = onSnapshot(q, async (snapshot) => {
       const list: TaskCategory[] = [];
-      snapshot.forEach((doc) => {
-        const data = doc.data();
-        list.push({ id: doc.id, ...data } as TaskCategory);
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data();
+        list.push({ id: docSnap.id, ...data } as TaskCategory);
       });
+      console.log(`[Firestore] Snapshot received: categories count = ${list.length}`);
       
       if (list.length === 0) {
         const seeded = DEFAULT_CATEGORIES.map(c => ({
@@ -500,19 +798,21 @@ export default function App() {
           userId: user.uid,
           createdAt: new Date().toISOString()
         }));
-        // Seed Firestore
+        console.log('[Firestore] Seeding default categories for user:', user.uid);
         for (const cat of seeded) {
           const docRef = doc(db, 'categories', `${user.uid}_${cat.id}`);
           await setDoc(docRef, cat, { merge: true });
         }
       } else {
-        // Sort categories by createdAt or id to maintain consistent order
         list.sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || '') || a.id.localeCompare(b.id));
         setCategories(list);
+        clearStore('categories').then(() => {
+          list.forEach(item => putToStore('categories', item));
+        });
       }
-    }, (err) => console.error('Categories listener error:', err));
+    }, (err) => console.error('[Firestore] Categories listener error:', err));
     return () => unsubscribe();
-  }, [user]);
+  }, [user, isCacheLoaded]);
 
   // Save/Update/Delete Category handlers
   const handleAddCategory = async (name: string, color: string) => {
@@ -527,14 +827,13 @@ export default function App() {
     };
 
     if (user.uid === 'guest_user') {
-      const newList = [...categories, newCat];
-      saveGuestCategories(newList);
+      saveGuestCategories([...categories, newCat]);
       return;
     }
 
     try {
-      const docRef = doc(db, 'categories', catId);
-      await setDoc(docRef, newCat);
+      setCategories(prev => [...prev, newCat]); // Optimistic update
+      await queueOfflineWrite(user.uid, 'categories', catId, 'set', newCat);
     } catch (err) {
       console.error('Failed to add category:', err);
     }
@@ -550,8 +849,9 @@ export default function App() {
     }
 
     try {
-      const docRef = doc(db, 'categories', id);
-      await setDoc(docRef, { name, color }, { merge: true });
+      const updatedCat = { id, userId: user.uid, name, color, createdAt: new Date().toISOString() };
+      setCategories(prev => prev.map(c => c.id === id ? { ...c, name, color } : c)); // Optimistic update
+      await queueOfflineWrite(user.uid, 'categories', id, 'set', updatedCat);
     } catch (err) {
       console.error('Failed to update category:', err);
     }
@@ -567,8 +867,8 @@ export default function App() {
     }
 
     try {
-      const docRef = doc(db, 'categories', id);
-      await deleteDoc(docRef);
+      setCategories(prev => prev.filter(c => c.id !== id)); // Optimistic update
+      await queueOfflineWrite(user.uid, 'categories', id, 'delete');
     } catch (err) {
       console.error('Failed to delete category:', err);
     }
@@ -576,7 +876,7 @@ export default function App() {
 
   // Sync tasks with server for background push notifications
   useEffect(() => {
-    if (user && tasks.length > 0) {
+    if (user && user.uid !== 'guest_user' && tasks.length > 0) {
       fetch('/api/sync-tasks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -598,59 +898,65 @@ export default function App() {
       }, {} as Record<string, any>);
 
       if (user.uid === 'guest_user') {
-        const currentTasks = [...tasks];
         if (taskToEdit && taskToEdit.id) {
-          const index = currentTasks.findIndex(t => t.id === taskToEdit.id);
-          if (index !== -1) {
-            currentTasks[index] = {
-              ...currentTasks[index],
-              ...sanitizedData,
-              updatedAt: new Date().toISOString()
-            } as Task;
-          }
+          const newList = tasks.map(t => t.id === taskToEdit.id ? { ...t, ...sanitizedData, updatedAt: new Date().toISOString() } : t) as Task[];
+          saveGuestTasks(newList);
         } else {
           const newTask: Task = {
-            id: 'task_' + Math.random().toString(36).substr(2, 9),
+            ...sanitizedData,
+            id: `task_${Date.now()}`,
             userId: user.uid,
-            title: sanitizedData.title || '',
-            notes: sanitizedData.notes || '',
-            startHour: sanitizedData.startHour ?? 9,
-            endHour: sanitizedData.endHour ?? 10,
-            anchorDate: sanitizedData.anchorDate || selectedDateStr,
-            recurrence: sanitizedData.recurrence || Recurrence.NONE,
-            notifyEnabled: sanitizedData.notifyEnabled ?? true,
-            color: sanitizedData.color || '#e56b55',
-            priority: sanitizedData.priority ?? false,
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString()
-          };
-          currentTasks.push(newTask);
+          } as Task;
+          saveGuestTasks([...tasks, newTask]);
         }
-        saveGuestTasks(currentTasks);
+        setIsEditorOpen(false);
+        setTaskToEdit(null);
+        if (taskData.anchorDate) {
+          setSelectedDateStr(taskData.anchorDate);
+        }
+        if (viewMode !== 'both' && viewMode !== 'day') {
+          setViewMode('both');
+        }
+        return;
+      }
+
+      if (taskToEdit && taskToEdit.id) {
+        // Edit entire series (or single non-recurring)
+        const updatedTask = {
+          ...taskToEdit,
+          ...sanitizedData,
+          userId: user.uid,
+          updatedAt: new Date().toISOString()
+        } as Task;
+        setTasks(prev => prev.map(t => t.id === taskToEdit.id ? updatedTask : t)); // Optimistic update
+        await queueOfflineWrite(user.uid, 'tasks', taskToEdit.id, 'set', updatedTask);
       } else {
-        if (taskToEdit && taskToEdit.id) {
-          // Edit entire series (or single non-recurring)
-          const taskDocRef = doc(db, 'tasks', taskToEdit.id);
-          await updateDoc(taskDocRef, {
-            ...sanitizedData,
-            updatedAt: new Date().toISOString()
-          });
-        } else {
-          // Create new series
-          const tasksCollectionRef = collection(db, 'tasks');
-          await addDoc(tasksCollectionRef, {
-            ...sanitizedData,
-            userId: user.uid,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString()
-          });
-        }
+        // Create new series
+        const newTaskId = `task_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        const newTask = {
+          ...sanitizedData,
+          id: newTaskId,
+          userId: user.uid,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        } as Task;
+        setTasks(prev => [...prev, newTask]); // Optimistic update
+        await queueOfflineWrite(user.uid, 'tasks', newTaskId, 'set', newTask);
       }
       setIsEditorOpen(false);
       setTaskToEdit(null);
+      if (taskData.anchorDate) {
+        setSelectedDateStr(taskData.anchorDate);
+      }
+      if (viewMode !== 'both' && viewMode !== 'day') {
+        setViewMode('both');
+      }
     } catch (error) {
       console.error('Error saving task:', error);
       alert('Failed to save task block. Please check connection and try again.');
+      throw error;
     }
   };
 
@@ -659,25 +965,49 @@ export default function App() {
     if (!user) return;
     try {
       if (user.uid === 'guest_user') {
-        const currentExceptions = [...exceptions];
-        const index = currentExceptions.findIndex(e => e.id === excData.id);
-        if (index !== -1) {
-          currentExceptions[index] = excData;
+        const idx = exceptions.findIndex(e => e.id === excData.id);
+        let newList: TaskException[];
+        if (idx !== -1) {
+          newList = exceptions.map(e => e.id === excData.id ? excData : e);
         } else {
-          currentExceptions.push(excData);
+          newList = [...exceptions, excData];
         }
-        saveGuestExceptions(currentExceptions);
-      } else {
-        const excDocRef = doc(db, 'exceptions', excData.id);
-        await setDoc(excDocRef, {
-          ...excData,
-          userId: user.uid,
-          updatedAt: new Date().toISOString()
-        });
+        saveGuestExceptions(newList);
+        setIsEditorOpen(false);
+        setTaskToEdit(null);
+        if (excData.date) {
+          setSelectedDateStr(excData.date);
+        }
+        if (viewMode !== 'both' && viewMode !== 'day') {
+          setViewMode('both');
+        }
+        return;
+      }
+
+      const updatedExc = {
+        ...excData,
+        userId: user.uid,
+        updatedAt: new Date().toISOString()
+      };
+      setExceptions(prev => {
+        const idx = prev.findIndex(e => e.id === excData.id);
+        if (idx !== -1) return prev.map(e => e.id === excData.id ? updatedExc : e);
+        return [...prev, updatedExc];
+      }); // Optimistic update
+      await queueOfflineWrite(user.uid, 'exceptions', excData.id, 'set', updatedExc);
+
+      setIsEditorOpen(false);
+      setTaskToEdit(null);
+      if (excData.date) {
+        setSelectedDateStr(excData.date);
+      }
+      if (viewMode !== 'both' && viewMode !== 'day') {
+        setViewMode('both');
       }
     } catch (error) {
       console.error('Error saving task exception:', error);
       alert('Failed to save task exception.');
+      throw error;
     }
   };
 
@@ -688,34 +1018,38 @@ export default function App() {
       if (user.uid === 'guest_user') {
         if (deleteOption === 'one') {
           const exceptionId = `${taskId}_${selectedDateStr}`;
-          const newExc: TaskException = {
-            id: exceptionId,
-            taskId,
-            date: selectedDateStr,
-            type: ExceptionType.SKIPPED
-          };
-          saveGuestExceptions([...exceptions, newExc]);
-        } else {
-          saveGuestTasks(tasks.filter(t => t.id !== taskId));
-        }
-      } else {
-        if (deleteOption === 'one') {
-          // Exclude single occurrence by saving exception of type SKIPPED
-          const exceptionId = `${taskId}_${selectedDateStr}`;
-          const excDocRef = doc(db, 'exceptions', exceptionId);
-          await setDoc(excDocRef, {
+          const newException: TaskException = {
             id: exceptionId,
             userId: user.uid,
             taskId,
             date: selectedDateStr,
             type: ExceptionType.SKIPPED,
-            updatedAt: new Date().toISOString()
-          });
+          };
+          saveGuestExceptions([...exceptions, newException]);
         } else {
-          // Delete entire series
-          const taskDocRef = doc(db, 'tasks', taskId);
-          await deleteDoc(taskDocRef);
+          saveGuestTasks(tasks.filter(t => t.id !== taskId));
         }
+        setIsEditorOpen(false);
+        setTaskToEdit(null);
+        return;
+      }
+
+      if (deleteOption === 'one') {
+        // Exclude single occurrence by saving exception of type SKIPPED
+        const exceptionId = `${taskId}_${selectedDateStr}`;
+        const newException: TaskException = {
+          id: exceptionId,
+          userId: user.uid,
+          taskId,
+          date: selectedDateStr,
+          type: ExceptionType.SKIPPED
+        };
+        setExceptions(prev => [...prev, newException]); // Optimistic update
+        await queueOfflineWrite(user.uid, 'exceptions', exceptionId, 'set', newException);
+      } else {
+        // Delete entire series
+        setTasks(prev => prev.filter(t => t.id !== taskId)); // Optimistic update
+        await queueOfflineWrite(user.uid, 'tasks', taskId, 'delete');
       }
       setIsEditorOpen(false);
       setTaskToEdit(null);
@@ -760,35 +1094,52 @@ export default function App() {
       return;
     }
 
+    if (user && user.uid === 'guest_user') {
+      const newTasks: Task[] = dayTasks.map((t, idx) => ({
+        id: `task_${Date.now()}_${idx}`,
+        userId: user.uid,
+        title: t.title,
+        notes: t.notes || '',
+        startHour: t.startHour,
+        endHour: t.endHour,
+        anchorDate: copyTargetDate,
+        recurrence: Recurrence.NONE,
+        notifyEnabled: t.notifyEnabled,
+        color: t.color,
+        priority: t.priority || false,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      }));
+      saveGuestTasks([...tasks, ...newTasks]);
+      setShowCopyDayDialog(false);
+      setSelectedDateStr(copyTargetDate);
+      alert(`Successfully duplicated ${dayTasks.length} blocks to ${copyTargetDate}!`);
+      return;
+    }
+
     try {
-      if (user?.uid === 'guest_user') {
-        const duplicated = dayTasks.map(t => ({
-          ...t,
-          id: 'task_' + Math.random().toString(36).substr(2, 9),
+      const newTasks: Task[] = [];
+      for (const t of dayTasks) {
+        const newId = `task_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        const newTask = {
+          userId: user.uid,
+          id: newId,
+          title: t.title,
+          notes: t.notes || '',
+          startHour: t.startHour,
+          endHour: t.endHour,
           anchorDate: copyTargetDate,
+          recurrence: Recurrence.NONE,
+          notifyEnabled: t.notifyEnabled,
+          color: t.color,
+          priority: t.priority || false,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
-        }));
-        saveGuestTasks([...tasks, ...duplicated]);
-      } else {
-        const tasksRef = collection(db, 'tasks');
-        for (const t of dayTasks) {
-          await addDoc(tasksRef, {
-            userId: user?.uid,
-            title: t.title,
-            notes: t.notes || '',
-            startHour: t.startHour,
-            endHour: t.endHour,
-            anchorDate: copyTargetDate,
-            recurrence: Recurrence.NONE,
-            notifyEnabled: t.notifyEnabled,
-            color: t.color,
-            priority: t.priority || false,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString()
-          });
-        }
+        } as Task;
+        newTasks.push(newTask);
+        await queueOfflineWrite(user.uid, 'tasks', newId, 'set', newTask);
       }
+      setTasks(prev => [...prev, ...newTasks]); // Optimistic update
       setShowCopyDayDialog(false);
       setSelectedDateStr(copyTargetDate);
       alert(`Successfully duplicated ${dayTasks.length} blocks to ${copyTargetDate}!`);
@@ -833,46 +1184,63 @@ export default function App() {
       return;
     }
 
-    try {
-      if (user?.uid === 'guest_user') {
-        const duplicated: Task[] = [];
-        for (const t of weekTasks) {
-          const dayIdx = sourceDates.indexOf(t.anchorDate);
-          if (dayIdx !== -1) {
-            const targetDate = targetDates[dayIdx];
-            duplicated.push({
-              ...t,
-              id: 'task_' + Math.random().toString(36).substr(2, 9),
-              anchorDate: targetDate,
-              createdAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString()
-            });
-          }
-        }
-        saveGuestTasks([...tasks, ...duplicated]);
-      } else {
-        const tasksRef = collection(db, 'tasks');
-        for (const t of weekTasks) {
-          const dayIdx = sourceDates.indexOf(t.anchorDate);
-          if (dayIdx !== -1) {
-            const targetDate = targetDates[dayIdx];
-            await addDoc(tasksRef, {
-              userId: user?.uid,
-              title: t.title,
-              notes: t.notes || '',
-              startHour: t.startHour,
-              endHour: t.endHour,
-              anchorDate: targetDate,
-              recurrence: Recurrence.NONE,
-              notifyEnabled: t.notifyEnabled,
-              color: t.color,
-              priority: t.priority || false,
-              createdAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString()
-            });
-          }
+    if (user && user.uid === 'guest_user') {
+      const newTasks: Task[] = [];
+      for (const t of weekTasks) {
+        const dayIdx = sourceDates.indexOf(t.anchorDate);
+        if (dayIdx !== -1) {
+          const targetDate = targetDates[dayIdx];
+          newTasks.push({
+            id: `task_${Date.now()}_${newTasks.length}`,
+            userId: user.uid,
+            title: t.title,
+            notes: t.notes || '',
+            startHour: t.startHour,
+            endHour: t.endHour,
+            anchorDate: targetDate,
+            recurrence: Recurrence.NONE,
+            notifyEnabled: t.notifyEnabled,
+            color: t.color,
+            priority: t.priority || false,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          });
         }
       }
+      saveGuestTasks([...tasks, ...newTasks]);
+      setShowCopyWeekDialog(false);
+      setSelectedDateStr(copyTargetWeekMonday);
+      alert(`Successfully duplicated ${weekTasks.length} blocks to week starting ${copyTargetWeekMonday}!`);
+      return;
+    }
+
+    try {
+      const newTasks: Task[] = [];
+      for (const t of weekTasks) {
+        const dayIdx = sourceDates.indexOf(t.anchorDate);
+        if (dayIdx !== -1) {
+          const targetDate = targetDates[dayIdx];
+          const newId = `task_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+          const newTask = {
+            userId: user.uid,
+            id: newId,
+            title: t.title,
+            notes: t.notes || '',
+            startHour: t.startHour,
+            endHour: t.endHour,
+            anchorDate: targetDate,
+            recurrence: Recurrence.NONE,
+            notifyEnabled: t.notifyEnabled,
+            color: t.color,
+            priority: t.priority || false,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          } as Task;
+          newTasks.push(newTask);
+          await queueOfflineWrite(user.uid, 'tasks', newId, 'set', newTask);
+        }
+      }
+      setTasks(prev => [...prev, ...newTasks]); // Optimistic update
       setShowCopyWeekDialog(false);
       setSelectedDateStr(copyTargetWeekMonday);
       alert(`Successfully duplicated ${weekTasks.length} blocks to week starting ${copyTargetWeekMonday}!`);
@@ -886,27 +1254,24 @@ export default function App() {
     if (!user) return;
     if (taskIds.length === 0) return;
 
+    if (user.uid === 'guest_user') {
+      const newList = tasks.map(t => taskIds.includes(t.id) ? { ...t, anchorDate: targetDate, updatedAt: new Date().toISOString() } : t);
+      saveGuestTasks(newList);
+      setSelectedDateStr(targetDate);
+      return;
+    }
+
     try {
-      if (user.uid === 'guest_user') {
-        const updatedTasks = tasks.map(t => {
-          if (taskIds.includes(t.id)) {
-            return {
-              ...t,
-              anchorDate: targetDate,
-              updatedAt: new Date().toISOString()
-            };
-          }
-          return t;
-        });
-        saveGuestTasks(updatedTasks);
-      } else {
-        for (const taskId of taskIds) {
-          const taskDocRef = doc(db, 'tasks', taskId);
-          await updateDoc(taskDocRef, {
-            anchorDate: targetDate,
-            updatedAt: new Date().toISOString()
-          });
-        }
+      setTasks(prev => prev.map(t => taskIds.includes(t.id) ? { ...t, anchorDate: targetDate, updatedAt: new Date().toISOString() } : t)); // Optimistic update
+      for (const taskId of taskIds) {
+        const existingTask = tasks.find(t => t.id === taskId) || {};
+        const updatedTask = {
+          ...existingTask,
+          userId: user.uid,
+          anchorDate: targetDate,
+          updatedAt: new Date().toISOString()
+        };
+        await queueOfflineWrite(user.uid, 'tasks', taskId, 'set', updatedTask);
       }
       setSelectedDateStr(targetDate);
     } catch (err) {
@@ -924,19 +1289,21 @@ export default function App() {
       color,
       createdAt: new Date().toISOString()
     };
+
     if (user.uid === 'guest_user') {
-      const newList = [...habits, newHabit];
-      saveGuestHabits(newList);
-    } else {
-      try {
-        await setDoc(doc(db, 'habits', newHabit.id), newHabit);
-      } catch (err) {
-        console.error('Failed to create habit:', err);
-      }
+      saveGuestHabits([...habits, newHabit]);
+      return;
+    }
+
+    try {
+      setHabits(prev => [...prev, newHabit]); // Optimistic update
+      await queueOfflineWrite(user.uid, 'habits', newHabit.id, 'set', newHabit);
+    } catch (err) {
+      console.error('Failed to create habit:', err);
     }
   };
 
-  const handleToggleHabit = async (habitId: string, date: string, done: boolean) => {
+  async function handleToggleHabit(habitId: string, date: string, done: boolean) {
     if (!user) return;
     const histId = `${habitId}_${date}`;
     const newHist: HabitHistory = {
@@ -947,71 +1314,65 @@ export default function App() {
     };
 
     if (user.uid === 'guest_user') {
-      let newList = [...habitHistory];
-      const index = newList.findIndex(h => h.id === histId);
-      if (index !== -1) {
-        if (!done) {
-          newList = newList.filter(h => h.id !== histId);
-        } else {
-          newList[index] = newHist;
-        }
-      } else if (done) {
-        newList.push(newHist);
+      if (!done) {
+        saveGuestHabitHistory(habitHistory.filter(h => h.id !== histId));
+      } else {
+        saveGuestHabitHistory([...habitHistory.filter(h => h.id !== histId), { ...newHist, userId: user.uid }]);
       }
-      saveGuestHabitHistory(newList);
-    } else {
-      try {
-        const docRef = doc(db, 'habit_history', histId);
-        if (!done) {
-          await deleteDoc(docRef);
-        } else {
-          await setDoc(docRef, { ...newHist, userId: user.uid });
-        }
-      } catch (err) {
-        console.error('Failed to toggle habit status:', err);
-      }
+      return;
     }
-  };
+
+    try {
+      if (!done) {
+        setHabitHistory(prev => prev.filter(h => h.id !== histId)); // Optimistic update
+        await queueOfflineWrite(user.uid, 'habit_history', histId, 'delete');
+      } else {
+        const fullHist = { ...newHist, userId: user.uid };
+        setHabitHistory(prev => [...prev.filter(h => h.id !== histId), fullHist]); // Optimistic update
+        await queueOfflineWrite(user.uid, 'habit_history', histId, 'set', fullHist);
+      }
+    } catch (err) {
+      console.error('Failed to toggle habit status:', err);
+    }
+  }
 
   const handleDeleteHabit = async (habitId: string) => {
     if (!user) return;
+
     if (user.uid === 'guest_user') {
-      const filteredHabits = habits.filter(h => h.id !== habitId);
-      const filteredHist = habitHistory.filter(h => h.habitId !== habitId);
-      saveGuestHabits(filteredHabits);
-      saveGuestHabitHistory(filteredHist);
-    } else {
-      try {
-        await deleteDoc(doc(db, 'habits', habitId));
-      } catch (err) {
-        console.error('Failed to delete habit:', err);
-      }
+      saveGuestHabits(habits.filter(h => h.id !== habitId));
+      saveGuestHabitHistory(habitHistory.filter(h => h.habitId !== habitId));
+      return;
+    }
+
+    try {
+      setHabits(prev => prev.filter(h => h.id !== habitId)); // Optimistic update
+      await queueOfflineWrite(user.uid, 'habits', habitId, 'delete');
+    } catch (err) {
+      console.error('Failed to delete habit:', err);
     }
   };
 
   const handleUpdateTaskTimes = async (taskId: string, startHour: number, endHour: number) => {
     if (!user) return;
+
+    if (user.uid === 'guest_user') {
+      const newList = tasks.map(t => t.id === taskId ? { ...t, startHour, endHour, updatedAt: new Date().toISOString() } : t);
+      saveGuestTasks(newList);
+      return;
+    }
+
     try {
-      if (user.uid === 'guest_user') {
-        const updated = tasks.map(t => {
-          if (t.id === taskId) {
-            return {
-              ...t,
-              startHour,
-              endHour,
-              updatedAt: new Date().toISOString()
-            };
-          }
-          return t;
-        });
-        saveGuestTasks(updated);
-      } else {
-        await updateDoc(doc(db, 'tasks', taskId), {
-          startHour,
-          endHour,
-          updatedAt: new Date().toISOString()
-        });
-      }
+      setTasks(prev => prev.map(t => t.id === taskId ? { ...t, startHour, endHour, updatedAt: new Date().toISOString() } : t)); // Optimistic update
+      const existingTask = tasks.find(t => t.id === taskId) || {};
+      const updatedTask = {
+        ...existingTask,
+        userId: user.uid,
+        startHour,
+        endHour,
+        updatedAt: new Date().toISOString()
+      };
+      await queueOfflineWrite(user.uid, 'tasks', taskId, 'set', updatedTask);
     } catch (err) {
       console.error('Failed to drag and drop task update:', err);
     }
@@ -1036,25 +1397,28 @@ export default function App() {
       updatedAt: new Date().toISOString()
     };
 
+    if (user.uid === 'guest_user') {
+      saveGuestTasks([...tasks, newTask]);
+      saveGuestTodos(todos.map(t => t.id === todoId ? { ...t, done: true, completedAt: new Date().toISOString() } : t));
+      return;
+    }
+
     try {
-      // Create scheduled task block
-      if (user.uid === 'guest_user') {
-        saveGuestTasks([...tasks, newTask]);
-        // Complete the todo item so it is scheduled and marked resolved
-        const updatedTodos = todos.map(t => {
-          if (t.id === todoId) {
-            return { ...t, done: true, completedAt: new Date().toISOString() };
-          }
-          return t;
-        });
-        saveGuestTodos(updatedTodos);
-      } else {
-        await setDoc(doc(db, 'tasks', newTaskId), newTask);
-        await updateDoc(doc(db, 'todos', todoId), {
-          done: true,
-          completedAt: new Date().toISOString()
-        });
-      }
+      // Optimistic updates
+      setTasks(prev => [...prev, newTask]);
+      setTodos(prev => prev.map(t => t.id === todoId ? { ...t, done: true, completedAt: new Date().toISOString() } : t));
+
+      // Create scheduled task block and complete todo in offline store
+      await queueOfflineWrite(user.uid, 'tasks', newTaskId, 'set', newTask);
+
+      const existingTodo = todos.find(t => t.id === todoId) || {};
+      const updatedTodo = {
+        ...existingTodo,
+        userId: user.uid,
+        done: true,
+        completedAt: new Date().toISOString()
+      };
+      await queueOfflineWrite(user.uid, 'todos', todoId, 'set', updatedTodo);
     } catch (err) {
       console.error('Failed to auto-schedule todo:', err);
     }
@@ -1076,39 +1440,30 @@ export default function App() {
     if (!user) return;
     const compId = `${taskId}_${date}`;
 
-    if (status === CompletionStatus.NO_RESPONSE) {
-      if (user.uid === 'guest_user') {
-        const newList = completions.filter(c => c.id !== compId);
-        saveGuestCompletions(newList);
+    if (user.uid === 'guest_user') {
+      if (status === CompletionStatus.NO_RESPONSE) {
+        saveGuestCompletions(completions.filter(c => c.id !== compId));
         return;
       }
-      try {
-        const compRef = doc(db, 'completions', compId);
-        await deleteDoc(compRef);
-      } catch (err) {
-        console.error('Failed to clear completion status:', err);
-      }
-      return;
-    }
-
-    if (user.uid === 'guest_user') {
-      const newCompletion: TaskCompletion = {
+      const newComp: TaskCompletion = {
         id: compId,
+        userId: user.uid,
         taskId,
         date,
         status,
         completedAt: new Date().toISOString()
       };
-      const newList = completions.filter(c => c.id !== compId);
-      newList.push(newCompletion);
-      saveGuestCompletions(newList);
+      const updatedCompletions = [
+        ...completions.filter(c => c.id !== compId),
+        newComp
+      ];
+      saveGuestCompletions(updatedCompletions);
 
-      // Trigger confetti if all tasks on this date are finished
       if (status === CompletionStatus.DONE) {
         const segments = getTaskSegmentsForDate(tasks, date, exceptions);
         if (segments.length > 0) {
           const allDone = segments.every(seg => {
-            const c = newList.find(comp => comp.taskId === seg.task.id && comp.date === date);
+            const c = updatedCompletions.find(comp => comp.taskId === seg.task.id && comp.date === date);
             return c?.status === CompletionStatus.DONE || c?.status === CompletionStatus.SKIPPED;
           });
           if (allDone) {
@@ -1120,16 +1475,27 @@ export default function App() {
       return;
     }
 
+    if (status === CompletionStatus.NO_RESPONSE) {
+      try {
+        setCompletions(prev => prev.filter(c => c.id !== compId)); // Optimistic update
+        await queueOfflineWrite(user.uid, 'completions', compId, 'delete');
+      } catch (err) {
+        console.error('Failed to clear completion status:', err);
+      }
+      return;
+    }
+
     try {
-      const compRef = doc(db, 'completions', compId);
-      await setDoc(compRef, {
+      const newComp: TaskCompletion = {
         id: compId,
         userId: user.uid,
         taskId,
         date,
         status,
         completedAt: new Date().toISOString()
-      });
+      };
+      setCompletions(prev => [...prev.filter(c => c.id !== compId), newComp]); // Optimistic update
+      await queueOfflineWrite(user.uid, 'completions', compId, 'set', newComp);
 
       // Trigger confetti if all tasks on this date are finished
       if (status === CompletionStatus.DONE) {
@@ -1163,24 +1529,7 @@ export default function App() {
     const existing = completions.find(c => c.taskId === taskId && c.date === date);
 
     if (user.uid === 'guest_user') {
-      const updated: TaskCompletion = {
-        id: compId,
-        taskId,
-        date,
-        status: existing?.status || CompletionStatus.NO_RESPONSE,
-        completedAt: existing?.completedAt || null,
-        actualDuration: existing?.actualDuration || 0,
-        timerStartedAt: nowStr
-      };
-      const newList = completions.filter(c => c.id !== compId);
-      newList.push(updated);
-      saveGuestCompletions(newList);
-      return;
-    }
-
-    try {
-      const compRef = doc(db, 'completions', compId);
-      await setDoc(compRef, {
+      const updated = {
         id: compId,
         userId: user.uid,
         taskId,
@@ -1189,7 +1538,24 @@ export default function App() {
         completedAt: existing?.completedAt || null,
         actualDuration: existing?.actualDuration || 0,
         timerStartedAt: nowStr
-      }, { merge: true });
+      };
+      saveGuestCompletions([...completions.filter(c => c.id !== compId), updated]);
+      return;
+    }
+
+    try {
+      const updated = {
+        id: compId,
+        userId: user.uid,
+        taskId,
+        date,
+        status: existing?.status || CompletionStatus.NO_RESPONSE,
+        completedAt: existing?.completedAt || null,
+        actualDuration: existing?.actualDuration || 0,
+        timerStartedAt: nowStr
+      };
+      setCompletions(prev => [...prev.filter(c => c.id !== compId), updated]); // Optimistic update
+      await queueOfflineWrite(user.uid, 'completions', compId, 'set', updated);
     } catch (err) {
       console.error('Failed to start timer:', err);
     }
@@ -1206,24 +1572,7 @@ export default function App() {
     const newDuration = (existing.actualDuration || 0) + elapsed;
 
     if (user.uid === 'guest_user') {
-      const updated: TaskCompletion = {
-        id: compId,
-        taskId,
-        date,
-        status: existing.status,
-        completedAt: existing.completedAt || null,
-        actualDuration: newDuration,
-        timerStartedAt: null
-      };
-      const newList = completions.filter(c => c.id !== compId);
-      newList.push(updated);
-      saveGuestCompletions(newList);
-      return;
-    }
-
-    try {
-      const compRef = doc(db, 'completions', compId);
-      await setDoc(compRef, {
+      const updated = {
         id: compId,
         userId: user.uid,
         taskId,
@@ -1232,7 +1581,24 @@ export default function App() {
         completedAt: existing.completedAt || null,
         actualDuration: newDuration,
         timerStartedAt: null
-      }, { merge: true });
+      };
+      saveGuestCompletions([...completions.filter(c => c.id !== compId), updated]);
+      return;
+    }
+
+    try {
+      const updated = {
+        id: compId,
+        userId: user.uid,
+        taskId,
+        date,
+        status: existing.status,
+        completedAt: existing.completedAt || null,
+        actualDuration: newDuration,
+        timerStartedAt: null
+      };
+      setCompletions(prev => [...prev.filter(c => c.id !== compId), updated]); // Optimistic update
+      await queueOfflineWrite(user.uid, 'completions', compId, 'set', updated);
     } catch (err) {
       console.error('Failed to stop timer:', err);
     }
@@ -1242,55 +1608,60 @@ export default function App() {
   const handleAddMustDo = async (title: string) => {
     if (!user) return;
 
-    if (user.uid === 'guest_user') {
-      const newItem: MustDoItem = {
-        id: 'mustdo_' + Math.random().toString(36).substr(2, 9),
-        userId: user.uid,
-        date: selectedDateStr,
-        title,
-        done: false,
-        createdAt: new Date().toISOString()
-      };
-      saveGuestMustdos([...mustdos, newItem]);
-      return;
-    }
-
-    const mustdosRef = collection(db, 'mustdos');
-    await addDoc(mustdosRef, {
+    const newItem: MustDoItem = {
+      id: 'mustdo_' + Math.random().toString(36).substr(2, 9),
       userId: user.uid,
       date: selectedDateStr,
       title,
       done: false,
       createdAt: new Date().toISOString()
-    });
+    };
+
+    if (user.uid === 'guest_user') {
+      saveGuestMustdos([...mustdos, newItem]);
+      return;
+    }
+
+    try {
+      setMustdos(prev => [...prev, newItem]); // Optimistic update
+      await queueOfflineWrite(user.uid, 'mustdos', newItem.id, 'set', newItem);
+    } catch (err) {
+      console.error('Failed to add must-do:', err);
+    }
   };
 
   const handleToggleMustDo = async (item: MustDoItem) => {
     if (!user) return;
 
     if (user.uid === 'guest_user') {
-      const newList = mustdos.map(m => m.id === item.id ? { ...m, done: !m.done } : m);
+      const newList = mustdos.map(m => m.id === item.id ? { ...m, done: !item.done } : m);
       saveGuestMustdos(newList);
       return;
     }
 
-    const itemDocRef = doc(db, 'mustdos', item.id);
-    await updateDoc(itemDocRef, {
-      done: !item.done
-    });
+    try {
+      const updatedItem = { ...item, done: !item.done, userId: user.uid };
+      setMustdos(prev => prev.map(m => m.id === item.id ? updatedItem : m)); // Optimistic update
+      await queueOfflineWrite(user.uid, 'mustdos', item.id, 'set', updatedItem);
+    } catch (err) {
+      console.error('Failed to toggle must-do:', err);
+    }
   };
 
   const handleDeleteMustDo = async (itemId: string) => {
     if (!user) return;
 
     if (user.uid === 'guest_user') {
-      const newList = mustdos.filter(m => m.id !== itemId);
-      saveGuestMustdos(newList);
+      saveGuestMustdos(mustdos.filter(m => m.id !== itemId));
       return;
     }
 
-    const itemDocRef = doc(db, 'mustdos', itemId);
-    await deleteDoc(itemDocRef);
+    try {
+      setMustdos(prev => prev.filter(m => m.id !== itemId)); // Optimistic update
+      await queueOfflineWrite(user.uid, 'mustdos', itemId, 'delete');
+    } catch (err) {
+      console.error('Failed to delete must-do:', err);
+    }
   };
 
   // Template handlers
@@ -1298,13 +1669,16 @@ export default function App() {
     if (!user) return;
 
     if (user.uid === 'guest_user') {
-      const newList = templates.filter(t => t.id !== templateId);
-      saveGuestTemplates(newList);
+      saveGuestTemplates(templates.filter(t => t.id !== templateId));
       return;
     }
 
-    const templateDocRef = doc(db, 'templates', templateId);
-    await deleteDoc(templateDocRef);
+    try {
+      setTemplates(prev => prev.filter(t => t.id !== templateId)); // Optimistic update
+      await queueOfflineWrite(user.uid, 'templates', templateId, 'delete');
+    } catch (err) {
+      console.error('Failed to delete template:', err);
+    }
   };
 
   // Todo handlers
@@ -1320,45 +1694,48 @@ export default function App() {
     }, {} as Record<string, any>);
 
     if (user.uid === 'guest_user') {
-      const currentTodos = [...todos];
       if (todoData.id) {
-        const index = currentTodos.findIndex(t => t.id === todoData.id);
-        if (index !== -1) {
-          currentTodos[index] = {
-            ...currentTodos[index],
-            ...sanitizedData
-          } as TodoItem;
-        }
+        const newList = todos.map(t => t.id === todoData.id ? { ...t, ...sanitizedData } : t) as TodoItem[];
+        saveGuestTodos(newList);
       } else {
         const newTodo: TodoItem = {
+          ...sanitizedData,
           id: 'todo_' + Math.random().toString(36).substr(2, 9),
           userId: user.uid,
-          title: sanitizedData.title || '',
-          done: sanitizedData.done ?? false,
-          order: sanitizedData.order ?? 0,
-          priority: sanitizedData.priority ?? false,
-          notes: sanitizedData.notes || '',
-          dueDate: sanitizedData.dueDate || undefined,
-          createdAt: sanitizedData.createdAt || new Date().toISOString(),
-          completedAt: sanitizedData.completedAt || undefined
-        };
-        currentTodos.push(newTodo);
+          done: false,
+          createdAt: new Date().toISOString()
+        } as TodoItem;
+        saveGuestTodos([...todos, newTodo]);
       }
-      saveGuestTodos(currentTodos);
       return;
     }
 
-    if (todoData.id) {
-      // Update existing
-      const todoDocRef = doc(db, 'todos', todoData.id);
-      await setDoc(todoDocRef, sanitizedData, { merge: true });
-    } else {
-      // Create new
-      const todosCollectionRef = collection(db, 'todos');
-      await addDoc(todosCollectionRef, {
-        ...sanitizedData,
-        userId: user.uid
-      });
+    try {
+      if (todoData.id) {
+        // Update existing
+        const existingTodo = todos.find(t => t.id === todoData.id) || {};
+        const updatedTodo = {
+          ...existingTodo,
+          ...sanitizedData,
+          userId: user.uid
+        } as TodoItem;
+        setTodos(prev => prev.map(t => t.id === todoData.id ? updatedTodo : t)); // Optimistic update
+        await queueOfflineWrite(user.uid, 'todos', todoData.id, 'set', updatedTodo);
+      } else {
+        // Create new
+        const newTodoId = 'todo_' + Math.random().toString(36).substr(2, 9);
+        const newTodo = {
+          ...sanitizedData,
+          id: newTodoId,
+          userId: user.uid,
+          done: false,
+          createdAt: new Date().toISOString()
+        } as TodoItem;
+        setTodos(prev => [...prev, newTodo]); // Optimistic update
+        await queueOfflineWrite(user.uid, 'todos', newTodoId, 'set', newTodo);
+      }
+    } catch (err) {
+      console.error('Failed to save todo:', err);
     }
   };
 
@@ -1366,13 +1743,16 @@ export default function App() {
     if (!user) return;
 
     if (user.uid === 'guest_user') {
-      const newList = todos.filter(t => t.id !== todoId);
-      saveGuestTodos(newList);
+      saveGuestTodos(todos.filter(t => t.id !== todoId));
       return;
     }
 
-    const todoDocRef = doc(db, 'todos', todoId);
-    await deleteDoc(todoDocRef);
+    try {
+      setTodos(prev => prev.filter(t => t.id !== todoId)); // Optimistic update
+      await queueOfflineWrite(user.uid, 'todos', todoId, 'delete');
+    } catch (err) {
+      console.error('Failed to delete todo:', err);
+    }
   };
 
   const handleClearCompletedTodos = async () => {
@@ -1381,17 +1761,15 @@ export default function App() {
     if (completedList.length === 0) return;
 
     if (user.uid === 'guest_user') {
-      const newList = todos.filter(t => !t.done);
-      saveGuestTodos(newList);
+      saveGuestTodos(todos.filter(t => !t.done));
       return;
     }
 
     try {
-      const deletePromises = completedList.map(todo => {
-        const todoDocRef = doc(db, 'todos', todo.id);
-        return deleteDoc(todoDocRef);
-      });
-      await Promise.all(deletePromises);
+      setTodos(prev => prev.filter(t => !t.done)); // Optimistic update
+      for (const todo of completedList) {
+        await queueOfflineWrite(user.uid, 'todos', todo.id, 'delete');
+      }
     } catch (err) {
       console.error('Failed to clear completed todos:', err);
     }
@@ -1403,17 +1781,15 @@ export default function App() {
     if (completedList.length === 0) return;
 
     if (user.uid === 'guest_user') {
-      const newList = mustdos.filter(m => !(m.date === selectedDateStr && m.done));
-      saveGuestMustdos(newList);
+      saveGuestMustdos(mustdos.filter(m => !(m.date === selectedDateStr && m.done)));
       return;
     }
 
     try {
-      const deletePromises = completedList.map(item => {
-        const itemDocRef = doc(db, 'mustdos', item.id);
-        return deleteDoc(itemDocRef);
-      });
-      await Promise.all(deletePromises);
+      setMustdos(prev => prev.filter(m => !(m.date === selectedDateStr && m.done))); // Optimistic update
+      for (const item of completedList) {
+        await queueOfflineWrite(user.uid, 'mustdos', item.id, 'delete');
+      }
     } catch (err) {
       console.error('Failed to clear completed must-dos:', err);
     }
@@ -1424,43 +1800,46 @@ export default function App() {
     const existing = reflections.find(r => r.date === date);
 
     if (user.uid === 'guest_user') {
-      let newList = [...reflections];
       if (existing) {
         if (!note.trim()) {
-          newList = newList.filter(r => r.id !== existing.id);
+          saveGuestReflections(reflections.filter(r => r.id !== existing.id));
         } else {
-          newList = newList.map(r => r.id === existing.id ? { ...r, note } : r);
+          saveGuestReflections(reflections.map(r => r.id === existing.id ? { ...r, note } : r));
         }
       } else if (note.trim()) {
-        newList.push({
-          id: 'reflection_' + Math.random().toString(36).substr(2, 9),
+        const newRef: DayReflection = {
+          id: 'refl_' + Math.random().toString(36).substr(2, 9),
           userId: user.uid,
           date,
           note,
           createdAt: new Date().toISOString()
-        });
+        };
+        saveGuestReflections([...reflections, newRef]);
       }
-      saveGuestReflections(newList);
       return;
     }
 
     try {
       if (existing) {
         if (!note.trim()) {
-          const refDoc = doc(db, 'day_reflections', existing.id);
-          await deleteDoc(refDoc);
+          setReflections(prev => prev.filter(r => r.id !== existing.id)); // Optimistic update
+          await queueOfflineWrite(user.uid, 'day_reflections', existing.id, 'delete');
         } else {
-          const refDoc = doc(db, 'day_reflections', existing.id);
-          await setDoc(refDoc, { note }, { merge: true });
+          const updatedRef = { ...existing, note, userId: user.uid };
+          setReflections(prev => prev.map(r => r.id === existing.id ? updatedRef : r)); // Optimistic update
+          await queueOfflineWrite(user.uid, 'day_reflections', existing.id, 'set', updatedRef);
         }
       } else if (note.trim()) {
-        const collectionRef = collection(db, 'day_reflections');
-        await addDoc(collectionRef, {
+        const newId = 'refl_' + Math.random().toString(36).substr(2, 9);
+        const newRef = {
+          id: newId,
           userId: user.uid,
           date,
           note,
           createdAt: new Date().toISOString()
-        });
+        };
+        setReflections(prev => [...prev, newRef]); // Optimistic update
+        await queueOfflineWrite(user.uid, 'day_reflections', newId, 'set', newRef);
       }
     } catch (error) {
       console.error('Error saving reflection:', error);
@@ -1472,43 +1851,46 @@ export default function App() {
     const existing = dailyGoals.find(g => g.date === date);
 
     if (user.uid === 'guest_user') {
-      let newList = [...dailyGoals];
       if (existing) {
         if (!goal.trim()) {
-          newList = newList.filter(g => g.id !== existing.id);
+          saveGuestDailyGoals(dailyGoals.filter(g => g.id !== existing.id));
         } else {
-          newList = newList.map(g => g.id === existing.id ? { ...g, goal } : g);
+          saveGuestDailyGoals(dailyGoals.map(g => g.id === existing.id ? { ...g, goal } : g));
         }
       } else if (goal.trim()) {
-        newList.push({
+        const newGoal: DailyGoal = {
           id: 'goal_' + Math.random().toString(36).substr(2, 9),
           userId: user.uid,
           date,
           goal,
           createdAt: new Date().toISOString()
-        });
+        };
+        saveGuestDailyGoals([...dailyGoals, newGoal]);
       }
-      saveGuestDailyGoals(newList);
       return;
     }
 
     try {
       if (existing) {
         if (!goal.trim()) {
-          const goalDoc = doc(db, 'daily_goals', existing.id);
-          await deleteDoc(goalDoc);
+          setDailyGoals(prev => prev.filter(g => g.id !== existing.id)); // Optimistic update
+          await queueOfflineWrite(user.uid, 'daily_goals', existing.id, 'delete');
         } else {
-          const goalDoc = doc(db, 'daily_goals', existing.id);
-          await setDoc(goalDoc, { goal }, { merge: true });
+          const updatedGoal = { ...existing, goal, userId: user.uid };
+          setDailyGoals(prev => prev.map(g => g.id === existing.id ? updatedGoal : g)); // Optimistic update
+          await queueOfflineWrite(user.uid, 'daily_goals', existing.id, 'set', updatedGoal);
         }
       } else if (goal.trim()) {
-        const collectionRef = collection(db, 'daily_goals');
-        await addDoc(collectionRef, {
+        const newId = 'goal_' + Math.random().toString(36).substr(2, 9);
+        const newGoal = {
+          id: newId,
           userId: user.uid,
           date,
           goal,
           createdAt: new Date().toISOString()
-        });
+        };
+        setDailyGoals(prev => [...prev, newGoal]); // Optimistic update
+        await queueOfflineWrite(user.uid, 'daily_goals', newId, 'set', newGoal);
       }
     } catch (error) {
       console.error('Error saving daily goal:', error);
@@ -1521,31 +1903,30 @@ export default function App() {
 
     if (user.uid === 'guest_user') {
       const newTask: Task = {
-        id: 'task_' + Math.random().toString(36).substr(2, 9),
+        ...taskData,
+        id: `task_${Date.now()}`,
         userId: user.uid,
-        title: taskData.title || '',
-        notes: taskData.notes || '',
-        startHour: taskData.startHour ?? 9,
-        endHour: taskData.endHour ?? 10,
-        anchorDate: taskData.anchorDate || selectedDateStr,
-        recurrence: taskData.recurrence || Recurrence.NONE,
-        notifyEnabled: taskData.notifyEnabled ?? false,
-        color: taskData.color || '#6366f1',
-        priority: taskData.priority ?? false,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
-      };
+      } as Task;
       saveGuestTasks([...tasks, newTask]);
       return;
     }
 
-    const tasksCollectionRef = collection(db, 'tasks');
-    await addDoc(tasksCollectionRef, {
-      ...taskData,
-      userId: user.uid,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    });
+    try {
+      const newId = `task_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const newTask = {
+        ...taskData,
+        id: newId,
+        userId: user.uid,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      } as Task;
+      setTasks(prev => [...prev, newTask]); // Optimistic update
+      await queueOfflineWrite(user.uid, 'tasks', newId, 'set', newTask);
+    } catch (error) {
+      console.error('Error importing task:', error);
+    }
   };
 
   // Loading Screen
@@ -1656,8 +2037,29 @@ export default function App() {
               <h1 className="font-serif text-xl font-bold text-ledger-paper tracking-tight leading-none">
                 Hourglass
               </h1>
-              <span className="font-mono text-[9px] text-ledger-paper-dim/60 uppercase tracking-widest mt-0.5 block">
-                24H PLANNER
+              <span className="font-mono text-[9px] text-ledger-paper-dim/60 uppercase tracking-widest mt-0.5 flex items-center gap-1.5">
+                <span>24H PLANNER</span>
+                <span className="text-ledger-line">•</span>
+                <button 
+                  onClick={() => triggerSync()} 
+                  className="flex items-center gap-1 hover:opacity-80 transition-opacity cursor-pointer text-left focus:outline-none"
+                  title="Click to trigger manual synchronization retry"
+                >
+                  <span className={`w-1.5 h-1.5 rounded-full ${
+                    syncStatus === 'Synced' ? 'bg-emerald-500' :
+                    syncStatus === 'Syncing' ? 'bg-amber-400 animate-pulse' :
+                    syncStatus === 'Offline' ? 'bg-slate-400' :
+                    'bg-red-500'
+                  }`} />
+                  <span className={`font-mono text-[8px] uppercase tracking-wider font-semibold ${
+                    syncStatus === 'Synced' ? 'text-emerald-500' :
+                    syncStatus === 'Syncing' ? 'text-amber-400' :
+                    syncStatus === 'Offline' ? 'text-slate-400' :
+                    'text-red-400'
+                  }`}>
+                    {syncStatus}
+                  </span>
+                </button>
               </span>
             </div>
           </div>
@@ -1778,16 +2180,14 @@ export default function App() {
         )}
 
         {/* Daily Inspirational Quote */}
-        {!focusMode && quote && (
-          <div id="daily-inspirational-quote" className="px-5 py-2.5 bg-ledger-slate/10 border-b border-ledger-line flex flex-col gap-0.5 animate-in fade-in slide-in-from-top-1 duration-300">
-            <p className="font-serif italic text-[11px] text-ledger-paper leading-relaxed">
-              "{quote.text}"
-            </p>
-            <p className="text-right font-mono text-[9px] text-ledger-gold font-semibold uppercase tracking-wider">
-              — {quote.author}
-            </p>
-          </div>
-        )}
+        <div id="daily-inspirational-quote" className="px-5 py-2.5 bg-ledger-slate/10 border-b border-ledger-line flex flex-col gap-0.5 animate-in fade-in slide-in-from-top-1 duration-300">
+          <p className="font-serif italic text-[11px] text-ledger-paper leading-relaxed">
+            "{quote.text}"
+          </p>
+          <p className="text-right font-mono text-[9px] text-ledger-gold font-semibold uppercase tracking-wider">
+            — {quote.author}
+          </p>
+        </div>
 
         {/* Main Body */}
         <main className="flex-1 p-4 flex flex-col gap-4">
@@ -2187,6 +2587,7 @@ export default function App() {
               onSaveTodo={handleSaveTodo}
               onDeleteTodo={handleDeleteTodo}
               onClearCompletedTodos={handleClearCompletedTodos}
+              onScheduleTodo={handleScheduleTodo}
             />
           )}
 
@@ -2268,6 +2669,60 @@ export default function App() {
 
         {/* Reward Confetti & Congrats Dialog Overlay */}
         <RewardConfetti active={showConfetti} />
+
+        {/* Floating In-App Interactive Toast Alerts Overlay */}
+        <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-3.5 max-w-sm w-full px-4 sm:px-0">
+          <AnimatePresence>
+            {activeNotifications.map((notif) => (
+              <motion.div
+                key={notif.id}
+                initial={{ opacity: 0, y: 30, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.9, transition: { duration: 0.15 } }}
+                layout
+                id={`in-app-toast-${notif.id}`}
+                className="w-full bg-ledger-slate border border-ledger-line rounded-2xl shadow-xl overflow-hidden p-4 flex flex-col gap-3.5"
+              >
+                {/* Header info */}
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex-1">
+                    <span className="text-[10px] uppercase font-bold tracking-wider text-ledger-coral flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-ledger-coral animate-ping" />
+                      {notif.type.replace('_', ' ')}
+                    </span>
+                    <h4 className="text-xs font-bold text-ledger-paper mt-0.5 leading-snug">
+                      {notif.title}
+                    </h4>
+                    <p className="text-[11px] text-ledger-paper-dim/80 mt-1 leading-relaxed whitespace-pre-line">
+                      {notif.body}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => handleDismissNotification(notif.id)}
+                    className="p-1 rounded-lg hover:bg-ledger-slate-light text-ledger-paper-dim hover:text-ledger-paper transition-colors cursor-pointer"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                {/* Actions Row */}
+                {notif.actions && notif.actions.length > 0 && (
+                  <div className="flex gap-2 pt-0.5">
+                    {notif.actions.map((act) => (
+                      <button
+                        key={act.action}
+                        onClick={() => handleExecuteNotificationAction(notif.id, act.action)}
+                        className="flex-1 h-8 bg-ledger-slate-light hover:bg-ledger-coral hover:text-ledger-dark border border-ledger-line hover:border-ledger-coral rounded-xl text-[10px] font-sans font-bold text-ledger-paper transition-all cursor-pointer flex items-center justify-center gap-1"
+                      >
+                        {act.title}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </motion.div>
+            ))}
+          </AnimatePresence>
+        </div>
         
       </div>
     </div>

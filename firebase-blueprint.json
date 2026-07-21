@@ -130,24 +130,34 @@
       },
       "required": ["userId", "date", "goal", "createdAt"]
     },
-    "PushSubscriptionData": {
-      "title": "PushSubscriptionData",
-      "description": "Web Push subscription record for notification payloads",
+    "User": {
+      "title": "User",
+      "description": "User notification settings, preferences, and timezone data",
       "type": "object",
       "properties": {
-        "id": { "type": "string" },
-        "userId": { "type": "string" },
-        "endpoint": { "type": "string" },
-        "keys": {
+        "fcmToken": { "type": "string" },
+        "notificationSettings": {
           "type": "object",
           "properties": {
-            "p256dh": { "type": "string" },
-            "auth": { "type": "string" }
-          },
-          "required": ["p256dh", "auth"]
-        }
-      },
-      "required": ["userId", "endpoint", "keys"]
+            "enabled": { "type": "boolean" },
+            "reminderTiming": { "type": "integer" },
+            "soundEnabled": { "type": "boolean" },
+            "vibrationEnabled": { "type": "boolean" },
+            "morningSummaryEnabled": { "type": "boolean" },
+            "morningSummaryTime": { "type": "string" },
+            "eveningSummaryEnabled": { "type": "boolean" },
+            "eveningSummaryTime": { "type": "string" },
+            "habitRemindersEnabled": { "type": "boolean" },
+            "breakRemindersEnabled": { "type": "boolean" },
+            "breakIntervalMinutes": { "type": "integer" },
+            "quietHoursEnabled": { "type": "boolean" },
+            "quietHoursStart": { "type": "string" },
+            "quietHoursEnd": { "type": "string" }
+          }
+        },
+        "timezone": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      }
     },
     "TaskCategory": {
       "title": "TaskCategory",
@@ -161,6 +171,32 @@
         "createdAt": { "type": "string" }
       },
       "required": ["userId", "name", "color", "createdAt"]
+    },
+    "Habit": {
+      "title": "Habit",
+      "description": "User-defined daily habits to track",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "title": { "type": "string", "maxLength": 100 },
+        "color": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["userId", "title", "color", "createdAt"]
+    },
+    "HabitHistory": {
+      "title": "HabitHistory",
+      "description": "Completion records for habits on specific dates",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "habitId": { "type": "string" },
+        "date": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+        "done": { "type": "boolean" }
+      },
+      "required": ["userId", "habitId", "date", "done"]
     }
   },
   "firestore": {
@@ -196,13 +232,21 @@
       "schema": "DailyGoal",
       "description": "Primary daily goals"
     },
-    "/subscriptions/{subId}": {
-      "schema": "PushSubscriptionData",
-      "description": "Web push subscriber endpoints"
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User notification preferences and device FCM token info"
     },
     "/categories/{categoryId}": {
       "schema": "TaskCategory",
       "description": "User-defined task categories"
+    },
+    "/habits/{habitId}": {
+      "schema": "Habit",
+      "description": "User-defined habits"
+    },
+    "/habit_history/{historyId}": {
+      "schema": "HabitHistory",
+      "description": "User habit tracking daily completion records"
     }
   }
 }

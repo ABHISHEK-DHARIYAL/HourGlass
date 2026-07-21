@@ -40,6 +40,7 @@ export interface TaskException {
   taskId: string;
   date: string; // YYYY-MM-DD
   type: ExceptionType;
+  userId?: string;
   overrideTitle?: string;
   overrideStartHour?: number;
   overrideEndHour?: number;
@@ -59,6 +60,7 @@ export interface TaskCompletion {
   taskId: string;
   date: string; // YYYY-MM-DD
   status: CompletionStatus;
+  userId?: string;
   completedAt?: string;
   actualDuration?: number; // in seconds
   timerStartedAt?: string; // ISO string if timer is running

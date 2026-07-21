@@ -10,6 +10,8 @@ import {
   signInWithPopup, 
   signOut as firebaseSignOut,
   onAuthStateChanged,
+  setPersistence,
+  browserLocalPersistence,
   User
 } from 'firebase/auth';
 import { 
@@ -29,19 +31,32 @@ import {
   onSnapshot,
   setLogLevel
 } from 'firebase/firestore';
+import { getMessaging, getToken, onMessage } from 'firebase/messaging';
 import firebaseConfigJson from '../firebase-applet-config.json';
 
 // Support override via environment variables
 const metaEnv = (import.meta as any).env || {};
+
+const getDatabaseId = () => {
+  const envVal = metaEnv.VITE_FIREBASE_DATABASE_ID;
+  if (envVal && envVal !== '(default)' && envVal.trim() !== '') {
+    return envVal;
+  }
+  if (firebaseConfigJson.firestoreDatabaseId && firebaseConfigJson.firestoreDatabaseId !== '(default)' && firebaseConfigJson.firestoreDatabaseId.trim() !== '') {
+    return firebaseConfigJson.firestoreDatabaseId;
+  }
+  return '(default)';
+};
+
 const firebaseConfig = {
-  apiKey: (metaEnv.VITE_FIREBASE_API_KEY as string) || firebaseConfigJson.apiKey,
-  authDomain: (metaEnv.VITE_FIREBASE_AUTH_DOMAIN as string) || firebaseConfigJson.authDomain,
-  projectId: (metaEnv.VITE_FIREBASE_PROJECT_ID as string) || firebaseConfigJson.projectId,
-  storageBucket: (metaEnv.VITE_FIREBASE_STORAGE_BUCKET as string) || firebaseConfigJson.storageBucket,
-  messagingSenderId: (metaEnv.VITE_FIREBASE_MESSAGING_SENDER_ID as string) || firebaseConfigJson.messagingSenderId,
-  appId: (metaEnv.VITE_FIREBASE_APP_ID as string) || firebaseConfigJson.appId,
-  measurementId: (metaEnv.VITE_FIREBASE_MEASUREMENT_ID as string) || firebaseConfigJson.measurementId,
-  firestoreDatabaseId: (metaEnv.VITE_FIREBASE_DATABASE_ID as string) || firebaseConfigJson.firestoreDatabaseId || firebaseConfigJson.projectId
+  apiKey: metaEnv.VITE_FIREBASE_API_KEY || firebaseConfigJson.apiKey,
+  authDomain: metaEnv.VITE_FIREBASE_AUTH_DOMAIN || firebaseConfigJson.authDomain,
+  projectId: metaEnv.VITE_FIREBASE_PROJECT_ID || firebaseConfigJson.projectId,
+  storageBucket: metaEnv.VITE_FIREBASE_STORAGE_BUCKET || firebaseConfigJson.storageBucket,
+  messagingSenderId: metaEnv.VITE_FIREBASE_MESSAGING_SENDER_ID || firebaseConfigJson.messagingSenderId,
+  appId: metaEnv.VITE_FIREBASE_APP_ID || firebaseConfigJson.appId,
+  measurementId: metaEnv.VITE_FIREBASE_MEASUREMENT_ID || firebaseConfigJson.measurementId,
+  firestoreDatabaseId: getDatabaseId()
 };
 
 // Silence internal Firestore warning/error logs in sandbox/test/dev environments
@@ -54,14 +69,86 @@ try {
 // Initialize Firebase with the config
 const app = initializeApp(firebaseConfig);
 
-export const isFirebaseConfigured = firebaseConfig.apiKey && !firebaseConfig.apiKey.includes('remixed-');
+export const isFirebaseConfigured = !!(
+  metaEnv.VITE_FIREBASE_API_KEY ||
+  (firebaseConfigJson.apiKey && !firebaseConfigJson.apiKey.includes('remixed-'))
+);
 
 export const auth = getAuth(app);
+
+// During Firebase initialization execute await setPersistence(auth, browserLocalPersistence) before any sign-in occurs
+try {
+  await setPersistence(auth, browserLocalPersistence);
+} catch (err) {
+  console.warn('Failed to set Auth persistence:', err);
+}
 
 // Use initializeFirestore with long polling enabled to bypass iframe socket blocks
 export const db = initializeFirestore(app, {
   experimentalForceLongPolling: true,
 }, firebaseConfig.firestoreDatabaseId);
+
+// Initialize Firebase Messaging
+export const messaging = typeof window !== 'undefined' && isFirebaseConfigured ? getMessaging(app) : null;
+
+/**
+ * Request notification permissions from the user and generate an FCM registration token.
+ */
+export async function requestNotificationPermission(): Promise<string | null> {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  if (!isFirebaseConfigured) {
+    console.warn('Firebase is not configured. Cannot request notification permission.');
+    return null;
+  }
+
+  if (!('Notification' in window)) {
+    console.warn('This browser does not support desktop notifications.');
+    return null;
+  }
+
+  try {
+    const permission = await Notification.requestPermission();
+    if (permission !== 'granted') {
+      console.warn('Notification permission was not granted.');
+      return null;
+    }
+
+    if (!messaging) {
+      console.warn('Firebase Messaging is not initialized.');
+      return null;
+    }
+
+    const vapidKey = metaEnv.VITE_FIREBASE_VAPID_KEY || undefined;
+    const token = await getToken(messaging, { vapidKey });
+    return token || null;
+  } catch (error) {
+    console.error('Error in requestNotificationPermission:', error);
+    return null;
+  }
+}
+
+/**
+ * Listen for Firebase Cloud Messaging foreground messages.
+ */
+export function initializeForegroundNotifications(onMessageCallback: (payload: any) => void): (() => void) | null {
+  if (typeof window === 'undefined' || !messaging) {
+    return null;
+  }
+
+  try {
+    const unsubscribe = onMessage(messaging, (payload) => {
+      console.log('Received foreground notification message:', payload);
+      onMessageCallback(payload);
+    });
+    return unsubscribe;
+  } catch (error) {
+    console.error('Error initializing foreground notifications:', error);
+    return null;
+  }
+}
 
 // Validate Connection to Firestore on startup
 async function testConnection() {

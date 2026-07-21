@@ -4,8 +4,8 @@
  */
 
 import React, { useState } from 'react';
-import { signInWithPopup, googleProvider, auth, GoogleAuthProvider, isFirebaseConfigured } from '../firebase';
-import { LogIn, AlertCircle, Info } from 'lucide-react';
+import { signInWithPopup, googleProvider, auth, GoogleAuthProvider } from '../firebase';
+import { AlertCircle } from 'lucide-react';
 import AnimatedHourglass from './AnimatedHourglass';
 
 interface LoginScreenProps {
@@ -34,27 +34,27 @@ export default function LoginScreen({ onSuccess }: LoginScreenProps) {
       if (err.code === 'auth/popup-blocked') {
         setError('Sign-in popup was blocked by your browser. Please allow popups or try opening the app in a new tab.');
       } else if (err.code === 'auth/popup-closed-by-user') {
-        setError('The Google sign-in window was closed before completing the authentication. If this persists, please try opening the application in a new tab (using the button in the top-right corner), or enter via Guest Sandbox Mode.');
+        setError('The Google sign-in window was closed before completing the authentication. If this persists, please try opening the application in a new tab (using the button in the top-right corner).');
       } else if (err.code === 'auth/operation-not-allowed') {
         setError('Google sign-in is not yet enabled in Firebase Console, or check your authDomain settings.');
+      } else if (err.code === 'auth/unauthorized-domain') {
+        const currentDomain = typeof window !== 'undefined' ? window.location.hostname : 'this domain';
+        setError(
+          `This domain (${currentDomain}) is not authorized for Google Sign-In in your Firebase project.\n\n` +
+          `To resolve this:\n` +
+          `1. Go to your Firebase Console.\n` +
+          `2. Navigate to Authentication > Settings > Authorized Domains.\n` +
+          `3. Click "Add domain" and enter:\n   ${currentDomain}\n` +
+          `4. Click "Add" to save, then refresh and try again!`
+        );
+      } else if (err.code === 'auth/configuration-not-found') {
+        setError('Google Sign-In is not enabled on this Firebase project yet. Please enable the Google sign-in provider under the Authentication Sign-in Method tab in your Firebase Console.');
       } else {
         setError(err.message || 'Failed to sign in with Google. Please try again.');
       }
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleGuestSignIn = () => {
-    const guestUser = {
-      uid: 'guest_user',
-      email: 'guest@hourglass.local',
-      emailVerified: true,
-      displayName: 'Guest Sandbox User',
-      photoURL: null
-    };
-    localStorage.setItem('hourglass_guest_user', JSON.stringify(guestUser));
-    window.location.reload();
   };
 
   return (
@@ -82,22 +82,10 @@ export default function LoginScreen({ onSuccess }: LoginScreenProps) {
         {error && (
           <div className="w-full mb-6 p-4 rounded-lg bg-ledger-coral/10 border border-ledger-coral/30 text-ledger-coral text-xs flex items-start gap-3 text-left">
             <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-            <span>{error}</span>
-          </div>
-        )}
-
-        {!isFirebaseConfigured && (
-          <div className="w-full mb-6 p-4 rounded-lg bg-ledger-gold/15 border border-ledger-gold/35 text-ledger-gold text-xs flex flex-col gap-2 text-left">
-            <div className="flex items-center gap-2">
-              <Info className="w-4 h-4 shrink-0" />
-              <span className="font-semibold uppercase tracking-wider font-mono text-[10px]">Cloud Sync Pending</span>
+            <div className="flex-1">
+              <p className="font-bold mb-1">Google Sign-in failed:</p>
+              <p className="mb-2 whitespace-pre-wrap leading-relaxed">{error}</p>
             </div>
-            <p className="text-ledger-paper-dim text-[11px] leading-relaxed">
-              Firebase credentials are not set. To sync across devices and save data to the cloud, configure your variables in the Settings panel of AI Studio.
-            </p>
-            <p className="text-ledger-paper/90 text-[11px] leading-relaxed font-semibold">
-              Tip: Enter sandbox mode below to try the fully-featured hourly scheduler immediately using local browser storage!
-            </p>
           </div>
         )}
 
@@ -134,16 +122,6 @@ export default function LoginScreen({ onSuccess }: LoginScreenProps) {
               <span>Continue with Google</span>
             </>
           )}
-        </button>
-
-        {/* Guest Sandbox Mode Button */}
-        <button
-          onClick={handleGuestSignIn}
-          disabled={loading}
-          id="guest-sign-in-button"
-          className="w-full h-11 flex items-center justify-center gap-2 bg-ledger-slate-light border border-ledger-line hover:border-ledger-coral text-ledger-paper hover:text-ledger-coral font-sans font-semibold rounded-xl transition-all cursor-pointer mt-3.5 disabled:opacity-50 text-xs"
-        >
-          <span>Use Guest Sandbox Mode (Offline/Local)</span>
         </button>
 
         <div className="mt-8 text-center text-[10px] text-ledger-paper-dim/60 font-mono">

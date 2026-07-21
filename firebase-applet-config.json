@@ -1,10 +1,10 @@
 {
-  "projectId": "remixed-project-id",
-  "appId": "remixed-app-id",
-  "apiKey": "remixed-api-key",
-  "authDomain": "remixed-auth-domain",
-  "firestoreDatabaseId": "remixed-firestore-database-id",
-  "storageBucket": "remixed-storage-bucket",
-  "messagingSenderId": "remixed-messaging-sender-id",
-  "measurementId": "remixed-measurement-id"
+  "projectId": "hourglass-fadb8",
+  "appId": "1:517132988601:web:441e0c5c1ec8e661aa2b68",
+  "apiKey": "AIzaSyDfN6DmwyTSHcGYAT0FpMIn0Hc-NTf1Lc0",
+  "authDomain": "hourglass-fadb8.firebaseapp.com",
+  "firestoreDatabaseId": "(default)",
+  "storageBucket": "hourglass-fadb8.firebasestorage.app",
+  "messagingSenderId": "517132988601",
+  "measurementId": "G-HP9VZYDP97"
 }
