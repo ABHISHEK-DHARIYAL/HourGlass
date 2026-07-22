@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Task, Recurrence } from '../types';
 import { Calendar, RefreshCw, Check, ArrowRight, ShieldAlert } from 'lucide-react';
+import { auth, signInWithPopup, gcalProvider, GoogleAuthProvider } from '../firebase';
 
 interface GCalSyncButtonProps {
   userId: string;
@@ -28,16 +29,38 @@ export default function GCalSyncButton({ userId, selectedDateStr, tasks, onImpor
     return localStorage.getItem('google_access_token');
   };
 
-  const fetchGoogleCalendarEvents = async () => {
-    const token = getAccessToken();
-    if (!token) {
-      setErrorMsg('Google Calendar access token not found. Please log out and sign back in to grant permission.');
-      return;
+  const requestCalendarPermission = async (): Promise<string | null> => {
+    try {
+      setStatusMsg('Requesting Google Calendar permission...');
+      const result = await signInWithPopup(auth, gcalProvider);
+      const credential = GoogleAuthProvider.credentialFromResult(result);
+      if (credential?.accessToken) {
+        localStorage.setItem('google_access_token', credential.accessToken);
+        return credential.accessToken;
+      }
+      return null;
+    } catch (err: any) {
+      console.error('Failed to obtain Google Calendar permission:', err);
+      setErrorMsg('Google Calendar authorization was cancelled or blocked.');
+      return null;
     }
+  };
 
+  const fetchGoogleCalendarEvents = async () => {
+    let token = getAccessToken();
+    
     setLoading(true);
     setErrorMsg(null);
     setStatusMsg('Connecting to Google Calendar...');
+
+    if (!token) {
+      token = await requestCalendarPermission();
+      if (!token) {
+        setLoading(false);
+        setStatusMsg(null);
+        return;
+      }
+    }
 
     try {
       // Calculate selectedDateStr day boundaries (UTC ISO string)
@@ -46,17 +69,26 @@ export default function GCalSyncButton({ userId, selectedDateStr, tasks, onImpor
 
       const url = `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${startOfDay.toISOString()}&timeMax=${endOfDay.toISOString()}&singleEvents=true&orderBy=startTime`;
 
-      const response = await fetch(url, {
+      let response = await fetch(url, {
         headers: {
           Authorization: `Bearer ${token}`
         }
       });
 
-      if (!response.ok) {
-        if (response.status === 401) {
-          throw new Error('Unauthorized. Google Calendar session expired. Please log out and sign back in.');
+      if (response.status === 401) {
+        console.log('Google token expired, requesting fresh Calendar permission...');
+        token = await requestCalendarPermission();
+        if (token) {
+          response = await fetch(url, {
+            headers: {
+              Authorization: `Bearer ${token}`
+            }
+          });
         }
-        throw new Error(`Google API error: ${response.statusText}`);
+      }
+
+      if (!response.ok) {
+        throw new Error(`Google API error (${response.status}): ${response.statusText}`);
       }
 
       const data = await response.json();

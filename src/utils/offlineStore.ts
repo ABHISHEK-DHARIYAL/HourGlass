@@ -138,3 +138,13 @@ export async function getQueue(): Promise<SyncQueueItem[]> {
 export async function removeFromQueue(id: string): Promise<void> {
   await deleteFromStore('sync_queue', id);
 }
+
+export async function clearAllOfflineStores(): Promise<void> {
+  for (const storeName of STORES) {
+    try {
+      await clearStore(storeName);
+    } catch (e) {
+      console.warn(`Failed to clear offline store ${storeName}:`, e);
+    }
+  }
+}

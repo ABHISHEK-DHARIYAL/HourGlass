@@ -6,6 +6,8 @@
 import React, { useState, useEffect } from 'react';
 import { 
   onAuthStateChanged, 
+  getRedirectResult,
+  GoogleAuthProvider,
   auth, 
   collection, 
   db, 
@@ -413,6 +415,19 @@ export default function App() {
       setAuthLoading(false);
       return;
     }
+
+    getRedirectResult(auth)
+      .then((result) => {
+        if (result) {
+          const credential = GoogleAuthProvider.credentialFromResult(result);
+          if (credential?.accessToken) {
+            localStorage.setItem('google_access_token', credential.accessToken);
+          }
+        }
+      })
+      .catch((err) => {
+        console.warn('App getRedirectResult error:', err);
+      });
 
     const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
       setUser(firebaseUser);
@@ -840,6 +855,11 @@ export default function App() {
       console.log(`[Firestore] Snapshot received: categories count = ${list.length}`);
       
       if (list.length === 0) {
+        const isDeleting = localStorage.getItem('hourglass_deleting_account') === 'true';
+        if (isDeleting || !auth.currentUser) {
+          setCategories([]);
+          return;
+        }
         const seeded = DEFAULT_CATEGORIES.map(c => ({
           ...c,
           userId: user.uid,
@@ -2005,6 +2025,7 @@ export default function App() {
       <WeeklyReviewView
         userId={user.uid}
         tasks={tasks}
+        exceptions={exceptions}
         completions={completions}
         onBack={() => setViewMode('month')}
       />
@@ -2023,7 +2044,7 @@ export default function App() {
   const todayMustDos = mustdos.filter(m => m.date === selectedDateStr);
 
   // Compute daily productivity percentage
-  const dailySegments = getTaskSegmentsForDate(tasks, selectedDateStr);
+  const dailySegments = getTaskSegmentsForDate(tasks, selectedDateStr, exceptions);
   const totalScheduled = dailySegments.length;
   const completedScheduled = dailySegments.filter(seg => 
     completions.some(c => c.taskId === seg.task.id && c.date === selectedDateStr && c.status === CompletionStatus.DONE)
@@ -2240,6 +2261,7 @@ export default function App() {
             <FocusModeView
               userId={user.uid}
               tasks={tasks}
+              exceptions={exceptions}
               completions={completions}
               currentDateStr={selectedDateStr}
               onSetStatus={handleSetCompletionStatus}
@@ -2549,6 +2571,7 @@ export default function App() {
             <GlanceView
               userId={user.uid}
               tasks={tasks}
+              exceptions={exceptions}
               completions={completions}
               currentDateStr={selectedDateStr}
               onSetStatus={handleSetCompletionStatus}
@@ -2560,6 +2583,7 @@ export default function App() {
             <MonthView
               currentDateStr={selectedDateStr}
               tasks={tasks}
+              exceptions={exceptions}
               onSelectDate={(date) => {
                 setSelectedDateStr(date);
                 if (viewMode === 'month') {
@@ -2609,6 +2633,7 @@ export default function App() {
             <DayTimelineView
               currentDateStr={selectedDateStr}
               tasks={tasks}
+              exceptions={exceptions}
               onSelectDate={setSelectedDateStr}
               onAddTask={handleOpenAddTask}
               onEditTask={handleOpenEditTask}

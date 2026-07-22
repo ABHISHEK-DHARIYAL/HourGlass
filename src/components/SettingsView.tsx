@@ -6,7 +6,8 @@
 import React, { useState, useEffect } from 'react';
 import { auth, firebaseSignOut, db, googleProvider, User, doc, getDoc, setDoc, messaging } from '../firebase';
 import { deleteUser, reauthenticateWithPopup, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
-import { collection, query, where, getDocs, deleteDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs, deleteDoc, writeBatch } from 'firebase/firestore';
+import { clearAllOfflineStores } from '../utils/offlineStore';
 import { getToken, deleteToken } from 'firebase/messaging';
 import { urlBase64ToUint8Array } from '../utils/pushUtils';
 import { TaskCategory } from '../types';
@@ -391,12 +392,13 @@ export default function SettingsView({
     }
   };
 
-  const handleDeleteAccount = async () => {
+  const handleDeleteAccount = async (forceSkipAuthDelete: boolean = false) => {
     if (user.uid === 'guest_user') {
       setDeletingAccount(true);
       try {
         localStorage.clear();
         sessionStorage.clear();
+        await clearAllOfflineStores().catch(console.warn);
         await new Promise<void>((resolve) => {
           const req = indexedDB.deleteDatabase('HourglassOfflineDB');
           req.onsuccess = () => resolve();
@@ -425,9 +427,12 @@ export default function SettingsView({
     setErrorMessage(null);
     setSuccessMessage(null);
 
+    // Mark account deletion in progress so snapshot listeners do not re-seed default data
+    localStorage.setItem('hourglass_deleting_account', 'true');
+
     try {
       const currentUser = auth.currentUser;
-      if (!currentUser) {
+      if (!currentUser && !forceSkipAuthDelete) {
         throw new Error('No user is currently signed in.');
       }
 
@@ -443,15 +448,11 @@ export default function SettingsView({
         console.warn('Failed to delete FCM token during account deletion:', err);
       }
 
-      // Delete user profile document from Firestore
-      try {
-        await deleteDoc(doc(db, 'users', user.uid));
-        console.log('Deleted user profile document.');
-      } catch (err) {
-        console.warn('Failed to delete user profile document:', err);
-      }
+      // 2. Clear IndexedDB offline cache stores first so local items do not resurrect in state
+      console.log('Clearing offline IndexedDB cache stores...');
+      await clearAllOfflineStores().catch((e) => console.warn('Failed clearing offline stores:', e));
 
-      // 2. Fetch and delete all user data across all Firestore collections to prevent orphaned entries
+      // 3. Fetch and delete all user data across all Firestore collections BEFORE deleting Auth user
       const collectionsToDelete = [
         'tasks',
         'exceptions',
@@ -476,20 +477,27 @@ export default function SettingsView({
           
           if (!querySnapshot.empty) {
             console.log(`Deleting ${querySnapshot.size} documents from Firestore collection: "${colName}"`);
-            const deletePromises = querySnapshot.docs.map((docSnap) => deleteDoc(docSnap.ref));
-            await Promise.all(deletePromises);
-            console.log(`Finished deletion for Firestore collection: "${colName}"`);
+            const batch = writeBatch(db);
+            querySnapshot.docs.forEach((docSnap) => {
+              batch.delete(docSnap.ref);
+            });
+            await batch.commit();
+            console.log(`Finished batch deletion for Firestore collection: "${colName}"`);
           }
         } catch (colErr: any) {
           console.error(`Error deleting documents from collection "${colName}":`, colErr);
-          // If we fail because of requires-recent-login, bubble it up
-          if (colErr && colErr.code === 'auth/requires-recent-login') {
-            throw colErr;
-          }
         }
       }
 
-      // 3. Request server-side cleanup (Firestore and tasks.json)
+      // 4. Delete user profile document from Firestore
+      try {
+        await deleteDoc(doc(db, 'users', user.uid));
+        console.log('Deleted user profile document.');
+      } catch (err) {
+        console.warn('Failed to delete user profile document:', err);
+      }
+
+      // 5. Request server-side cleanup (Firestore and tasks.json)
       try {
         const serverCleanupResponse = await fetch('/api/delete-account', {
           method: 'POST',
@@ -506,32 +514,49 @@ export default function SettingsView({
         console.error('Failed to request server-side cleanup:', serverErr);
       }
 
-      // 4. Delete Auth user from Firebase Authentication
-      console.log('Deleting user account from Firebase Authentication...');
-      try {
-        await deleteUser(currentUser);
-        console.log('Firebase Authentication user deleted successfully.');
-      } catch (authDeleteErr: any) {
-        if (authDeleteErr && (authDeleteErr.code === 'auth/user-not-found' || authDeleteErr.message?.includes('user-not-found'))) {
-          console.log('User account was already deleted from Firebase Auth.');
-        } else if (authDeleteErr && authDeleteErr.code === 'auth/requires-recent-login') {
-          throw authDeleteErr;
-        } else {
-          console.warn('Client auth user deletion note:', authDeleteErr);
+      // 6. FINALLY delete Firebase Authentication user
+      if (currentUser && !forceSkipAuthDelete) {
+        try {
+          console.log('Attempting Firebase Auth deletion...');
+          await deleteUser(currentUser);
+          console.log('Firebase Authentication user deleted successfully.');
+        } catch (authDeleteErr: any) {
+          if (authDeleteErr && authDeleteErr.code === 'auth/requires-recent-login') {
+            console.warn('Account deletion requires recent login. Prompting for re-authentication.');
+            setShowReauthModal(true);
+            setDeletingAccount(false);
+            return;
+          } else if (authDeleteErr && (authDeleteErr.code === 'auth/user-not-found' || authDeleteErr.message?.includes('user-not-found'))) {
+            console.log('User account was already deleted from Firebase Auth.');
+          } else {
+            console.warn('Client auth user deletion note:', authDeleteErr);
+          }
         }
       }
 
-      // 5. Sign the user out from Firebase
+      // 7. Sign the user out from Firebase
       try {
         await firebaseSignOut(auth);
       } catch (signOutErr) {
         console.warn('Post-deletion sign-out error (non-blocking):', signOutErr);
       }
 
-      // 6. Clear Client-Side Cache, IndexedDB, LocalStorage, SessionStorage
-      console.log('Clearing local caches, databases, and localStorage...');
+      // 8. Clear Client-Side Cache, Service Workers, IndexedDB, LocalStorage, SessionStorage
+      console.log('Clearing local caches, databases, service workers, and localStorage...');
       localStorage.clear();
       sessionStorage.clear();
+
+      if ('serviceWorker' in navigator) {
+        try {
+          const registrations = await navigator.serviceWorker.getRegistrations();
+          for (const reg of registrations) {
+            await reg.unregister();
+          }
+          console.log('Unregistered service workers.');
+        } catch (swErr) {
+          console.warn('Service worker unregistration note:', swErr);
+        }
+      }
 
       await new Promise<void>((resolve) => {
         const req = indexedDB.deleteDatabase('HourglassOfflineDB');
@@ -562,7 +587,7 @@ export default function SettingsView({
       setSuccessMessage('Your account and all associated data have been permanently deleted. Redirecting to the login screen...');
       setTimeout(() => {
         window.location.href = '/'; // Full page reload/redirect to index ensuring clean app state
-      }, 3000);
+      }, 2000);
 
     } catch (err: any) {
       if (err && err.code === 'auth/requires-recent-login') {
@@ -1275,8 +1300,8 @@ export default function SettingsView({
       {/* Re-authentication Dialog / Modal */}
       {showReauthModal && (() => {
         const currentUser = auth.currentUser;
-        const isGoogleUser = currentUser?.providerData.some(p => p.providerId === 'google.com') ?? true;
         const isPasswordUser = currentUser?.providerData.some(p => p.providerId === 'password') ?? false;
+        const isGoogleUser = !isPasswordUser || (currentUser?.providerData.some(p => p.providerId === 'google.com') ?? true);
 
         return (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
@@ -1294,9 +1319,21 @@ export default function SettingsView({
               </p>
 
               {reauthError && (
-                <div className="mb-4 p-3 rounded-lg bg-ledger-coral/10 border border-ledger-coral/30 text-ledger-coral text-xs text-left flex gap-2 items-start">
-                  <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5" />
-                  <span className="leading-relaxed">{reauthError}</span>
+                <div className="mb-4 p-3 rounded-lg bg-ledger-coral/10 border border-ledger-coral/30 text-ledger-coral text-xs text-left flex flex-col gap-2">
+                  <div className="flex gap-2 items-start">
+                    <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5" />
+                    <span className="leading-relaxed">{reauthError}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowReauthModal(false);
+                      handleDeleteAccount(true);
+                    }}
+                    className="mt-1 text-[11px] font-bold underline text-ledger-coral hover:text-ledger-coral/80 text-left cursor-pointer"
+                  >
+                    Purge All Data &amp; Sign Out
+                  </button>
                 </div>
               )}
 

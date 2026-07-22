@@ -80,14 +80,8 @@ if (fs.existsSync(serviceAccountPath)) {
 }
 
 async function initFirestoreAvailabilityCheck() {
-  if (!fs.existsSync(serviceAccountPath)) {
-    console.log('[Firebase Admin] No serviceAccount.json detected. Skipping database permission test and using local JSON storage for backend cache.');
-    isFirestoreAvailable = false;
-    return;
-  }
-
   try {
-    // Temporarily enable to run verification query
+    // Enable to run verification query
     isFirestoreAvailable = true;
     const db = getDb();
     if (db) {
@@ -98,7 +92,7 @@ async function initFirestoreAvailabilityCheck() {
       isFirestoreAvailable = false;
     }
   } catch (err: any) {
-    console.log(`[Firebase Admin] Firestore connection check reported permission limits: ${err.message || err}. Disabling Firestore Admin queries (falling back to local cache).`);
+    console.log(`[Firebase Admin] Firestore connection check note: ${err.message || err}.`);
     isFirestoreAvailable = false;
   }
 }
@@ -330,7 +324,11 @@ app.post('/api/debug-log', (req, res) => {
   const logLine = `[${timestamp || new Date().toISOString()}] [${level || 'INFO'}] ${message}\n`;
   try {
     fs.appendFileSync(DEBUG_LOGS_FILE, logLine, 'utf-8');
-    console.log(logLine.trim());
+    if (level === 'ERROR') {
+      console.error(logLine.trim());
+    } else if (level === 'WARN') {
+      console.warn(logLine.trim());
+    }
   } catch (err) {
     console.error('Failed to append to debug-logs.txt:', err);
   }

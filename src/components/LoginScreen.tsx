@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
-import { signInWithPopup, googleProvider, auth, GoogleAuthProvider } from '../firebase';
+import React, { useState, useEffect } from 'react';
+import { signInWithPopup, signInWithRedirect, getRedirectResult, googleProvider, auth, GoogleAuthProvider } from '../firebase';
 import { AlertCircle } from 'lucide-react';
 import AnimatedHourglass from './AnimatedHourglass';
 
@@ -16,25 +16,63 @@ export default function LoginScreen({ onSuccess }: LoginScreenProps) {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  // Check for redirect result when returning from signInWithRedirect
+  useEffect(() => {
+    let isMounted = true;
+    getRedirectResult(auth)
+      .then((result) => {
+        if (result && isMounted) {
+          const credential = GoogleAuthProvider.credentialFromResult(result);
+          if (credential?.accessToken) {
+            localStorage.setItem('google_access_token', credential.accessToken);
+          }
+          if (onSuccess) {
+            onSuccess();
+          }
+        }
+      })
+      .catch((err) => {
+        if (isMounted) {
+          console.warn('Redirect result check error:', err);
+        }
+      });
+    return () => { isMounted = false; };
+  }, [onSuccess]);
+
   const handleGoogleSignIn = async () => {
     setError(null);
     setLoading(true);
     try {
-      const result = await signInWithPopup(auth, googleProvider);
-      const credential = GoogleAuthProvider.credentialFromResult(result);
-      if (credential?.accessToken) {
-        localStorage.setItem('google_access_token', credential.accessToken);
+      let result;
+      try {
+        result = await signInWithPopup(auth, googleProvider);
+      } catch (popupErr: any) {
+        if (popupErr.code === 'auth/popup-blocked' || popupErr.code === 'auth/popup-closed-by-user') {
+          console.warn('Popup was blocked or closed, attempting fallback to redirect sign-in:', popupErr);
+          await signInWithRedirect(auth, googleProvider);
+          return;
+        }
+        throw popupErr;
       }
-      if (onSuccess) {
-        onSuccess();
+
+      if (result) {
+        const credential = GoogleAuthProvider.credentialFromResult(result);
+        if (credential?.accessToken) {
+          localStorage.setItem('google_access_token', credential.accessToken);
+        }
+        if (onSuccess) {
+          onSuccess();
+        }
       }
+      // Note: Keep loading = true here so button stays in loading state
+      // until App.tsx updates auth state and unmounts LoginScreen.
     } catch (err: any) {
       console.error('Google sign-in error:', err);
-      // Give context about the iframe or blockages if they occur
+      setLoading(false); // Only reset loading state when an error actually occurred!
       if (err.code === 'auth/popup-blocked') {
         setError('Sign-in popup was blocked by your browser. Please allow popups or try opening the app in a new tab.');
       } else if (err.code === 'auth/popup-closed-by-user') {
-        setError('The Google sign-in window was closed before completing the authentication. If this persists, please try opening the application in a new tab (using the button in the top-right corner).');
+        setError('The Google sign-in window was closed before completing authentication. Please try clicking "Continue with Google" again or open in a new tab.');
       } else if (err.code === 'auth/operation-not-allowed') {
         setError('Google sign-in is not yet enabled in Firebase Console, or check your authDomain settings.');
       } else if (err.code === 'auth/unauthorized-domain') {
@@ -52,8 +90,6 @@ export default function LoginScreen({ onSuccess }: LoginScreenProps) {
       } else {
         setError(err.message || 'Failed to sign in with Google. Please try again.');
       }
-    } finally {
-      setLoading(false);
     }
   };
 

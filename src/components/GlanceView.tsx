@@ -1,17 +1,18 @@
 import React, { useState, useEffect } from 'react';
-import { Task, TaskCompletion, CompletionStatus } from '../types';
+import { Task, TaskCompletion, CompletionStatus, TaskException } from '../types';
 import { getTaskSegmentsForDate, formatDate, formatHourLabel } from '../utils/dateUtils';
 import { Clock, Play, AlertCircle, CheckCircle, Ban } from 'lucide-react';
 
 interface GlanceViewProps {
   userId: string;
   tasks: Task[];
+  exceptions?: TaskException[];
   completions: TaskCompletion[];
   currentDateStr: string;
   onSetStatus: (taskId: string, date: string, status: CompletionStatus) => Promise<void>;
 }
 
-export default function GlanceView({ userId, tasks, completions, currentDateStr, onSetStatus }: GlanceViewProps) {
+export default function GlanceView({ userId, tasks, exceptions = [], completions, currentDateStr, onSetStatus }: GlanceViewProps) {
   const [now, setNow] = useState(new Date());
 
   useEffect(() => {
@@ -22,7 +23,7 @@ export default function GlanceView({ userId, tasks, completions, currentDateStr,
   const currentHour = now.getHours();
   
   // Get active segments for today
-  const segments = getTaskSegmentsForDate(tasks, currentDateStr);
+  const segments = getTaskSegmentsForDate(tasks, currentDateStr, exceptions);
 
   // Find currently active segment
   const currentSegment = segments.find(seg => currentHour >= seg.startHour && currentHour < seg.endHour);

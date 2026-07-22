@@ -4,17 +4,18 @@
  */
 
 import React from 'react';
-import { Task } from '../types';
-import { isTaskActiveOnDate, parseLocalDate, formatDate } from '../utils/dateUtils';
+import { Task, TaskException } from '../types';
+import { getTaskSegmentsForDate, parseLocalDate, formatDate } from '../utils/dateUtils';
 import { ChevronLeft, ChevronRight, CalendarDays } from 'lucide-react';
 
 interface MonthViewProps {
   currentDateStr: string;
   tasks: Task[];
+  exceptions?: TaskException[];
   onSelectDate: (dateStr: string) => void;
 }
 
-export default function MonthView({ currentDateStr, tasks, onSelectDate }: MonthViewProps) {
+export default function MonthView({ currentDateStr, tasks, exceptions = [], onSelectDate }: MonthViewProps) {
   // Use a local Date object representing the month view focus
   const focusedDate = parseLocalDate(currentDateStr);
   const [viewDate, setViewDate] = React.useState<Date>(new Date(focusedDate.getFullYear(), focusedDate.getMonth(), 1));
@@ -97,7 +98,7 @@ export default function MonthView({ currentDateStr, tasks, onSelectDate }: Month
 
   // Check if a date has at least one active task
   const hasActiveTasks = (dateStr: string) => {
-    return tasks.some(task => isTaskActiveOnDate(task, dateStr));
+    return getTaskSegmentsForDate(tasks, dateStr, exceptions).length > 0;
   };
 
   const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];

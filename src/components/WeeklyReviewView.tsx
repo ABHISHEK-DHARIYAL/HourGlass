@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Task, TaskCompletion, CompletionStatus } from '../types';
+import { Task, TaskCompletion, CompletionStatus, TaskException, ExceptionType } from '../types';
 import { calculateStreak, formatDate, parseLocalDate } from '../utils/dateUtils';
 import { BarChart3, TrendingUp, Flame, Award, Calendar, ArrowLeft, PieChart, Clock, Zap } from 'lucide-react';
 
@@ -19,11 +19,12 @@ const getCategoryName = (color: string, taskTitle: string) => {
 interface WeeklyReviewViewProps {
   userId: string;
   tasks: Task[];
+  exceptions?: TaskException[];
   completions: TaskCompletion[];
   onBack: () => void;
 }
 
-export default function WeeklyReviewView({ userId, tasks, completions, onBack }: WeeklyReviewViewProps) {
+export default function WeeklyReviewView({ userId, tasks, exceptions = [], completions, onBack }: WeeklyReviewViewProps) {
   const [weekOffset, setWeekOffset] = useState(0);
 
   // Get date range for the selected week
@@ -68,7 +69,8 @@ export default function WeeklyReviewView({ userId, tasks, completions, onBack }:
       const isWeekly = task.recurrence === 'WEEKLY' && dateStr >= task.anchorDate && parseLocalDate(dateStr).getDay() === parseLocalDate(task.anchorDate).getDay();
       
       const isActive = isNone || isDaily || isWeekly;
-      if (isActive) {
+      const isSkipped = exceptions.some(e => e.taskId === task.id && e.date === dateStr && e.type === ExceptionType.SKIPPED);
+      if (isActive && !isSkipped) {
         // Calculate task duration
         let duration = task.endHour > task.startHour ? task.endHour - task.startHour : (24 - task.startHour) + task.endHour;
         totalPlannedHours += duration;

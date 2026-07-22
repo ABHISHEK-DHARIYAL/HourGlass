@@ -4,7 +4,7 @@
  */
 
 import React, { useEffect, useRef, useState } from 'react';
-import { Task, DailyGoal, Recurrence } from '../types';
+import { Task, DailyGoal, Recurrence, TaskException } from '../types';
 import { 
   getTaskSegmentsForDate, 
   formatHourLabel, 
@@ -20,6 +20,7 @@ import MarkdownRenderer from './MarkdownRenderer';
 interface DayTimelineViewProps {
   currentDateStr: string;
   tasks: Task[];
+  exceptions?: TaskException[];
   onSelectDate: (dateStr: string) => void;
   onAddTask: (startHour: number) => void;
   onEditTask: (task: Task) => void;
@@ -41,6 +42,7 @@ interface PositionedSegment extends TaskSegment {
 export default function DayTimelineView({
   currentDateStr,
   tasks,
+  exceptions = [],
   onSelectDate,
   onAddTask,
   onEditTask,
@@ -94,7 +96,7 @@ export default function DayTimelineView({
 
   const hourRowHeight = 72; // px per hour slot
 
-  const activeSegments = getTaskSegmentsForDate(tasks, currentDateStr);
+  const activeSegments = getTaskSegmentsForDate(tasks, currentDateStr, exceptions);
 
   const getOccupiedHours = (): Set<number> => {
     const busy = new Set<number>();

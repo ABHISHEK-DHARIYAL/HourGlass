@@ -8,6 +8,8 @@ import {
   getAuth, 
   GoogleAuthProvider, 
   signInWithPopup, 
+  signInWithRedirect,
+  getRedirectResult,
   signOut as firebaseSignOut,
   onAuthStateChanged,
   setPersistence,
@@ -168,13 +170,21 @@ async function testConnection() {
 testConnection();
 
 export const googleProvider = new GoogleAuthProvider();
-// Set standard scopes if needed
 googleProvider.addScope('email');
 googleProvider.addScope('profile');
-googleProvider.addScope('https://www.googleapis.com/auth/calendar.events');
+googleProvider.setCustomParameters({
+  prompt: 'select_account'
+});
+
+export const gcalProvider = new GoogleAuthProvider();
+gcalProvider.setCustomParameters({
+  prompt: 'consent'
+});
 
 export { 
   signInWithPopup, 
+  signInWithRedirect,
+  getRedirectResult,
   firebaseSignOut, 
   onAuthStateChanged,
   GoogleAuthProvider,

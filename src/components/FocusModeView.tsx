@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Task, TaskCompletion, CompletionStatus } from '../types';
+import { Task, TaskCompletion, CompletionStatus, TaskException } from '../types';
 import { getTaskSegmentsForDate, formatHourLabel } from '../utils/dateUtils';
 import { motion, AnimatePresence } from 'motion/react';
 import { Clock, Play, CheckCircle, AlertCircle, Ban, ArrowRight, EyeOff } from 'lucide-react';
@@ -8,6 +8,7 @@ import MarkdownRenderer from './MarkdownRenderer';
 interface FocusModeViewProps {
   userId: string;
   tasks: Task[];
+  exceptions?: TaskException[];
   completions: TaskCompletion[];
   currentDateStr: string;
   onSetStatus: (taskId: string, date: string, status: CompletionStatus) => Promise<void>;
@@ -17,6 +18,7 @@ interface FocusModeViewProps {
 export default function FocusModeView({ 
   userId, 
   tasks, 
+  exceptions = [],
   completions, 
   currentDateStr, 
   onSetStatus 
@@ -32,7 +34,7 @@ export default function FocusModeView({
   const currentMinute = now.getMinutes();
   
   // Get active segments for today
-  const segments = getTaskSegmentsForDate(tasks, currentDateStr);
+  const segments = getTaskSegmentsForDate(tasks, currentDateStr, exceptions);
 
   // Find currently active segment
   const currentSegment = segments.find(seg => currentHour >= seg.startHour && currentHour < seg.endHour);
