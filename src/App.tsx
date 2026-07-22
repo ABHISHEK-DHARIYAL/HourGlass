@@ -44,7 +44,7 @@ import DailyReflectionSection from './components/DailyReflectionSection';
 import DailyGoalInput from './components/DailyGoalInput';
 import FocusModeView from './components/FocusModeView';
 import { motion, AnimatePresence } from 'motion/react';
-import { getAllFromStore, putToStore, clearStore, deleteFromStore } from './utils/offlineStore';
+import { getAllFromStore, putToStore, clearStore, deleteFromStore, getQueue } from './utils/offlineStore';
 import { queueOfflineWrite, subscribeToSyncStatus, triggerSync, SyncStatus } from './utils/offlineSyncManager';
 import { useNotifications } from './hooks/useNotifications';
 import { 
@@ -425,50 +425,132 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
+  // Helper to safely merge Firestore snapshots with pending offline queue and local IndexedDB store items
+  const syncCollectionWithSnapshot = async <T extends { id: string }>(
+    collectionName: string,
+    firestoreList: T[],
+    setState: (updater: T[] | ((prev: T[]) => T[])) => void
+  ) => {
+    try {
+      const queue = await getQueue();
+      const pendingItems = queue.filter(q => q.collectionName === collectionName);
+      const pendingDeletes = new Set(pendingItems.filter(q => q.action === 'delete').map(q => q.itemId));
+      const localItems = await getAllFromStore<T>(collectionName);
+
+      const mergedMap = new Map<string, T>();
+
+      // 1. Add Firestore items that have not been pending-deleted locally
+      firestoreList.forEach(item => {
+        if (!pendingDeletes.has(item.id)) {
+          mergedMap.set(item.id, item);
+        }
+      });
+
+      // 2. Add local store items that are not in Firestore yet and not pending-deleted
+      localItems.forEach(item => {
+        if (!pendingDeletes.has(item.id) && !mergedMap.has(item.id)) {
+          mergedMap.set(item.id, item);
+        }
+      });
+
+      // 3. Add or overwrite pending 'set' queue items (local user actions are most recent)
+      pendingItems.forEach(q => {
+        if (q.action === 'set' && q.data) {
+          mergedMap.set(q.itemId, { id: q.itemId, ...q.data } as T);
+        }
+      });
+
+      const mergedList = Array.from(mergedMap.values());
+      setState(mergedList);
+
+      // Persist merged set back to local IndexedDB
+      await clearStore(collectionName);
+      for (const item of mergedList) {
+        await putToStore(collectionName, item);
+      }
+    } catch (err) {
+      console.error(`[syncCollectionWithSnapshot] Failed to merge ${collectionName}:`, err);
+      setState(firestoreList);
+    }
+  };
+
   // Guest Storage Helpers
   const saveGuestTasks = (newList: Task[]) => {
     setTasks(newList);
     localStorage.setItem('hourglass_tasks', JSON.stringify(newList));
+    clearStore('tasks').then(() => {
+      newList.forEach(item => putToStore('tasks', item));
+    });
   };
   const saveGuestExceptions = (newList: TaskException[]) => {
     setExceptions(newList);
     localStorage.setItem('hourglass_exceptions', JSON.stringify(newList));
+    clearStore('exceptions').then(() => {
+      newList.forEach(item => putToStore('exceptions', item));
+    });
   };
   const saveGuestCompletions = (newList: TaskCompletion[]) => {
     setCompletions(newList);
     localStorage.setItem('hourglass_completions', JSON.stringify(newList));
+    clearStore('completions').then(() => {
+      newList.forEach(item => putToStore('completions', item));
+    });
   };
   const saveGuestMustdos = (newList: MustDoItem[]) => {
     setMustdos(newList);
     localStorage.setItem('hourglass_mustdos', JSON.stringify(newList));
+    clearStore('mustdos').then(() => {
+      newList.forEach(item => putToStore('mustdos', item));
+    });
   };
   const saveGuestTemplates = (newList: TaskTemplate[]) => {
     setTemplates(newList);
     localStorage.setItem('hourglass_templates', JSON.stringify(newList));
+    clearStore('templates').then(() => {
+      newList.forEach(item => putToStore('templates', item));
+    });
   };
   const saveGuestTodos = (newList: TodoItem[]) => {
     setTodos(newList);
     localStorage.setItem('hourglass_todos', JSON.stringify(newList));
+    clearStore('todos').then(() => {
+      newList.forEach(item => putToStore('todos', item));
+    });
   };
   const saveGuestReflections = (newList: DayReflection[]) => {
     setReflections(newList);
     localStorage.setItem('hourglass_reflections', JSON.stringify(newList));
+    clearStore('day_reflections').then(() => {
+      newList.forEach(item => putToStore('day_reflections', item));
+    });
   };
   const saveGuestDailyGoals = (newList: DailyGoal[]) => {
     setDailyGoals(newList);
     localStorage.setItem('hourglass_daily_goals', JSON.stringify(newList));
+    clearStore('daily_goals').then(() => {
+      newList.forEach(item => putToStore('daily_goals', item));
+    });
   };
   const saveGuestHabits = (newList: Habit[]) => {
     setHabits(newList);
     localStorage.setItem('hourglass_habits', JSON.stringify(newList));
+    clearStore('habits').then(() => {
+      newList.forEach(item => putToStore('habits', item));
+    });
   };
   const saveGuestHabitHistory = (newList: HabitHistory[]) => {
     setHabitHistory(newList);
     localStorage.setItem('hourglass_habit_history', JSON.stringify(newList));
+    clearStore('habit_history').then(() => {
+      newList.forEach(item => putToStore('habit_history', item));
+    });
   };
   const saveGuestCategories = (newList: TaskCategory[]) => {
     setCategories(newList);
     localStorage.setItem('hourglass_categories', JSON.stringify(newList));
+    clearStore('categories').then(() => {
+      newList.forEach(item => putToStore('categories', item));
+    });
   };
 
   // Set up real-time listener for tasks
@@ -493,15 +575,7 @@ export default function App() {
         list.push({ id: docSnap.id, ...data } as Task);
       });
       logDebug(`[onSnapshot] Snapshot processing complete: listCount=${list.length}`);
-      setTasks(list);
-      clearStore('tasks').then(() => {
-        logDebug('[onSnapshot] Local IndexedDB tasks store cleared for overwrite.');
-        list.forEach(item => {
-          putToStore('tasks', item).then(() => {
-            logDebug(`[onSnapshot] Local IndexedDB tasks cache put succeeded: id="${item.id}"`);
-          });
-        });
-      });
+      syncCollectionWithSnapshot('tasks', list, setTasks);
     }, (err: any) => {
       logDebug(`[onSnapshot] [ERROR] Tasks listener error: ${err?.message || err}`, 'ERROR');
     });
@@ -528,10 +602,7 @@ export default function App() {
         list.push({ id: docSnap.id, ...data } as TaskException);
       });
       console.log(`[Firestore] Snapshot received: exceptions count = ${list.length}`);
-      setExceptions(list);
-      clearStore('exceptions').then(() => {
-        list.forEach(item => putToStore('exceptions', item));
-      });
+      syncCollectionWithSnapshot('exceptions', list, setExceptions);
     }, (err) => console.error('[Firestore] Exceptions listener error:', err));
     return () => unsubscribe();
   }, [user, isCacheLoaded]);
@@ -556,10 +627,7 @@ export default function App() {
         list.push({ id: docSnap.id, ...data } as TaskCompletion);
       });
       console.log(`[Firestore] Snapshot received: completions count = ${list.length}`);
-      setCompletions(list);
-      clearStore('completions').then(() => {
-        list.forEach(item => putToStore('completions', item));
-      });
+      syncCollectionWithSnapshot('completions', list, setCompletions);
     }, (err) => console.error('[Firestore] Completions listener error:', err));
     return () => unsubscribe();
   }, [user, isCacheLoaded]);
@@ -584,10 +652,7 @@ export default function App() {
         list.push({ id: docSnap.id, ...data } as MustDoItem);
       });
       console.log(`[Firestore] Snapshot received: mustdos count = ${list.length}`);
-      setMustdos(list);
-      clearStore('mustdos').then(() => {
-        list.forEach(item => putToStore('mustdos', item));
-      });
+      syncCollectionWithSnapshot('mustdos', list, setMustdos);
     }, (err) => console.error('[Firestore] Must-dos listener error:', err));
     return () => unsubscribe();
   }, [user, isCacheLoaded]);
@@ -612,10 +677,7 @@ export default function App() {
         list.push({ id: docSnap.id, ...data } as TaskTemplate);
       });
       console.log(`[Firestore] Snapshot received: templates count = ${list.length}`);
-      setTemplates(list);
-      clearStore('templates').then(() => {
-        list.forEach(item => putToStore('templates', item));
-      });
+      syncCollectionWithSnapshot('templates', list, setTemplates);
     }, (err) => console.error('[Firestore] Templates listener error:', err));
     return () => unsubscribe();
   }, [user, isCacheLoaded]);
@@ -640,10 +702,7 @@ export default function App() {
         list.push({ id: docSnap.id, ...data } as TodoItem);
       });
       console.log(`[Firestore] Snapshot received: todos count = ${list.length}`);
-      setTodos(list);
-      clearStore('todos').then(() => {
-        list.forEach(item => putToStore('todos', item));
-      });
+      syncCollectionWithSnapshot('todos', list, setTodos);
     }, (err) => console.error('[Firestore] Todos listener error:', err));
     return () => unsubscribe();
   }, [user, isCacheLoaded]);
@@ -668,10 +727,7 @@ export default function App() {
         list.push({ id: docSnap.id, ...data } as DayReflection);
       });
       console.log(`[Firestore] Snapshot received: day_reflections count = ${list.length}`);
-      setReflections(list);
-      clearStore('day_reflections').then(() => {
-        list.forEach(item => putToStore('day_reflections', item));
-      });
+      syncCollectionWithSnapshot('day_reflections', list, setReflections);
     }, (err) => console.error('[Firestore] Day reflections listener error:', err));
     return () => unsubscribe();
   }, [user, isCacheLoaded]);
@@ -696,10 +752,7 @@ export default function App() {
         list.push({ id: docSnap.id, ...data } as DailyGoal);
       });
       console.log(`[Firestore] Snapshot received: daily_goals count = ${list.length}`);
-      setDailyGoals(list);
-      clearStore('daily_goals').then(() => {
-        list.forEach(item => putToStore('daily_goals', item));
-      });
+      syncCollectionWithSnapshot('daily_goals', list, setDailyGoals);
     }, (err) => console.error('[Firestore] Daily goals listener error:', err));
     return () => unsubscribe();
   }, [user, isCacheLoaded]);
@@ -724,10 +777,7 @@ export default function App() {
         list.push({ id: docSnap.id, ...data } as Habit);
       });
       console.log(`[Firestore] Snapshot received: habits count = ${list.length}`);
-      setHabits(list);
-      clearStore('habits').then(() => {
-        list.forEach(item => putToStore('habits', item));
-      });
+      syncCollectionWithSnapshot('habits', list, setHabits);
     }, (err) => console.error('[Firestore] Habits listener error:', err));
     return () => unsubscribe();
   }, [user, isCacheLoaded]);
@@ -752,10 +802,7 @@ export default function App() {
         list.push({ id: docSnap.id, ...data } as HabitHistory);
       });
       console.log(`[Firestore] Snapshot received: habit_history count = ${list.length}`);
-      setHabitHistory(list);
-      clearStore('habit_history').then(() => {
-        list.forEach(item => putToStore('habit_history', item));
-      });
+      syncCollectionWithSnapshot('habit_history', list, setHabitHistory);
     }, (err) => console.error('[Firestore] Habit history listener error:', err));
     return () => unsubscribe();
   }, [user, isCacheLoaded]);
@@ -805,10 +852,7 @@ export default function App() {
         }
       } else {
         list.sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || '') || a.id.localeCompare(b.id));
-        setCategories(list);
-        clearStore('categories').then(() => {
-          list.forEach(item => putToStore('categories', item));
-        });
+        syncCollectionWithSnapshot('categories', list, setCategories);
       }
     }, (err) => console.error('[Firestore] Categories listener error:', err));
     return () => unsubscribe();

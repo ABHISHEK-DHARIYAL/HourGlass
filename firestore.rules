@@ -81,5 +81,11 @@ service cloud.firestore {
       allow read: if isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid);
       allow write: if isAuthenticated() && (request.resource == null || request.resource.data.userId == request.auth.uid);
     }
+
+    // Rules for Subscriptions collection
+    match /subscriptions/{subId} {
+      allow read: if isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid);
+      allow write: if isAuthenticated() && (request.resource == null || request.resource.data.userId == request.auth.uid);
+    }
   }
 }

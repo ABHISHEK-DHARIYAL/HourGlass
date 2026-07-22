@@ -10,6 +10,7 @@ import { createServer as createViteServer } from 'vite';
 import { initializeApp, cert } from 'firebase-admin/app';
 import { getMessaging } from 'firebase-admin/messaging';
 import { getFirestore } from 'firebase-admin/firestore';
+import { getAuth } from 'firebase-admin/auth';
 import { getTaskSegmentsForDate } from '../src/utils/dateUtils';
 import { Task } from '../src/types';
 
@@ -405,17 +406,64 @@ app.post('/api/delete-account', async (req, res) => {
   }
 
   try {
+    console.log(`[API /api/delete-account] Initiating backend deletion for user: ${userId}`);
+
     // 1. Delete user from tasks.json
     const allTasks = loadTasks();
     if (allTasks[userId]) {
       delete allTasks[userId];
       saveTasks(allTasks);
+      console.log(`[API /api/delete-account] Removed user ${userId} from tasks.json`);
     }
 
-    // 2. Delete user document from local fallback and Firestore
+    // 2. Delete user document from local fallback and Firestore users collection
     await deleteUserDoc(userId);
 
-    res.json({ success: true });
+    // 3. Delete all user data across all Firestore collections
+    const db = getDb();
+    if (db) {
+      const collectionsToDelete = [
+        'tasks',
+        'exceptions',
+        'completions',
+        'mustdos',
+        'templates',
+        'todos',
+        'day_reflections',
+        'daily_goals',
+        'subscriptions',
+        'categories',
+        'habits',
+        'habit_history'
+      ];
+
+      for (const colName of collectionsToDelete) {
+        try {
+          const snapshot = await db.collection(colName).where('userId', '==', userId).get();
+          if (!snapshot.empty) {
+            console.log(`[API /api/delete-account] Deleting ${snapshot.size} docs from Firestore collection "${colName}" for user ${userId}`);
+            const batch = db.batch();
+            snapshot.docs.forEach((docSnap) => {
+              batch.delete(docSnap.ref);
+            });
+            await batch.commit();
+          }
+        } catch (colErr: any) {
+          console.error(`[API /api/delete-account] Error deleting Firestore collection "${colName}":`, colErr.message || colErr);
+        }
+      }
+    }
+
+    // 4. Try deleting user account from Firebase Auth via Admin SDK
+    try {
+      const authAdmin = getAuth();
+      await authAdmin.deleteUser(userId);
+      console.log(`[API /api/delete-account] Admin Auth successfully deleted user ${userId}`);
+    } catch (authErr: any) {
+      console.warn(`[API /api/delete-account] Admin Auth note for user ${userId}:`, authErr.message || authErr);
+    }
+
+    res.json({ success: true, message: 'Account and all data permanently deleted' });
   } catch (err: any) {
     console.error('Failed to delete user account data:', err);
     res.status(500).json({ error: err.message });

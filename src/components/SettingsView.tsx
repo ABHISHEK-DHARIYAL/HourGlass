@@ -508,8 +508,18 @@ export default function SettingsView({
 
       // 4. Delete Auth user from Firebase Authentication
       console.log('Deleting user account from Firebase Authentication...');
-      await deleteUser(currentUser);
-      console.log('Firebase Authentication user deleted successfully.');
+      try {
+        await deleteUser(currentUser);
+        console.log('Firebase Authentication user deleted successfully.');
+      } catch (authDeleteErr: any) {
+        if (authDeleteErr && (authDeleteErr.code === 'auth/user-not-found' || authDeleteErr.message?.includes('user-not-found'))) {
+          console.log('User account was already deleted from Firebase Auth.');
+        } else if (authDeleteErr && authDeleteErr.code === 'auth/requires-recent-login') {
+          throw authDeleteErr;
+        } else {
+          console.warn('Client auth user deletion note:', authDeleteErr);
+        }
+      }
 
       // 5. Sign the user out from Firebase
       try {
