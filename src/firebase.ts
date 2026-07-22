@@ -168,10 +168,6 @@ async function testConnection() {
 testConnection();
 
 export const googleProvider = new GoogleAuthProvider();
-// Set standard scopes if needed
-googleProvider.addScope('email');
-googleProvider.addScope('profile');
-googleProvider.addScope('https://www.googleapis.com/auth/calendar.events');
 
 export { 
   signInWithPopup, 
