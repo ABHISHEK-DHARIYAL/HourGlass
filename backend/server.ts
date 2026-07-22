@@ -98,9 +98,6 @@ async function initFirestoreAvailabilityCheck() {
 }
 
 function getDb() {
-  if (!isFirestoreAvailable) {
-    return null;
-  }
   try {
     const databaseId = firebaseConfig.firestoreDatabaseId && 
                        firebaseConfig.firestoreDatabaseId.trim() !== '' &&

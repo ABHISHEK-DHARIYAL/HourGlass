@@ -473,20 +473,44 @@ export default function SettingsView({
         try {
           const colRef = collection(db, colName);
           const q = query(colRef, where('userId', '==', user.uid));
-          const querySnapshot = await getDocs(q);
           
-          if (!querySnapshot.empty) {
-            console.log(`Deleting ${querySnapshot.size} documents from Firestore collection: "${colName}"`);
+          while (true) {
+            const querySnapshot = await getDocs(q);
+            if (querySnapshot.empty) break;
+            
             const batch = writeBatch(db);
-            querySnapshot.docs.forEach((docSnap) => {
+            const chunk = querySnapshot.docs.slice(0, 400);
+            chunk.forEach((docSnap) => {
               batch.delete(docSnap.ref);
             });
             await batch.commit();
-            console.log(`Finished batch deletion for Firestore collection: "${colName}"`);
+            console.log(`Finished batch deletion chunk of ${chunk.length} docs for Firestore collection: "${colName}"`);
+            
+            if (querySnapshot.size <= 400) break;
           }
         } catch (colErr: any) {
           console.error(`Error deleting documents from collection "${colName}":`, colErr);
         }
+      }
+
+      // Explicitly delete any category docs prefixed with user.uid
+      try {
+        const catColRef = collection(db, 'categories');
+        const catSnapshot = await getDocs(catColRef);
+        const batch = writeBatch(db);
+        let count = 0;
+        catSnapshot.docs.forEach((docSnap) => {
+          if (docSnap.id.startsWith(`${user.uid}_`)) {
+            batch.delete(docSnap.ref);
+            count++;
+          }
+        });
+        if (count > 0) {
+          await batch.commit();
+          console.log(`Deleted ${count} prefixed category documents.`);
+        }
+      } catch (catErr) {
+        console.warn('Prefixed categories deletion note:', catErr);
       }
 
       // 4. Delete user profile document from Firestore
@@ -1415,6 +1439,18 @@ export default function SettingsView({
                     </button>
                   </form>
                 )}
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowReauthModal(false);
+                    handleDeleteAccount(true);
+                  }}
+                  disabled={reauthorizing}
+                  className="w-full h-10 border border-ledger-coral/40 text-ledger-coral text-xs font-semibold rounded-xl hover:bg-ledger-coral/10 active:scale-98 transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  Force Purge All Data &amp; Sign Out
+                </button>
 
                 <button
                   type="button"

@@ -59,8 +59,11 @@ service cloud.firestore {
       allow write: if isAuthenticated() && (request.resource == null || request.resource.data.userId == request.auth.uid);
     }
 
-    // Rules for Users collection
+    // Rules for Users collection and subcollections
     match /users/{userId} {
+      allow read, write: if isAuthenticated() && userId == request.auth.uid;
+    }
+    match /users/{userId}/{allPaths=**} {
       allow read, write: if isAuthenticated() && userId == request.auth.uid;
     }
 
