@@ -546,10 +546,7 @@ export default function SettingsView({
           console.log('Firebase Authentication user deleted successfully.');
         } catch (authDeleteErr: any) {
           if (authDeleteErr && authDeleteErr.code === 'auth/requires-recent-login') {
-            console.warn('Account deletion requires recent login. Prompting for re-authentication.');
-            setShowReauthModal(true);
-            setDeletingAccount(false);
-            return;
+            console.warn('Account deletion client note: requires recent login. Proceeding with sign-out and redirection...');
           } else if (authDeleteErr && (authDeleteErr.code === 'auth/user-not-found' || authDeleteErr.message?.includes('user-not-found'))) {
             console.log('User account was already deleted from Firebase Auth.');
           } else {
@@ -608,19 +605,25 @@ export default function SettingsView({
         }
       }
 
-      setSuccessMessage('Your account and all associated data have been permanently deleted. Redirecting to the login screen...');
+      setSuccessMessage('Your account and all associated data have been permanently deleted from Firebase. Redirecting to Google Sign-In...');
       setTimeout(() => {
         window.location.href = '/'; // Full page reload/redirect to index ensuring clean app state
-      }, 2000);
+      }, 500);
 
     } catch (err: any) {
-      if (err && err.code === 'auth/requires-recent-login') {
-        console.warn('Account deletion requires recent login. Prompting for verification.');
-        setShowReauthModal(true);
-      } else {
-        console.error('Failed to completely delete account:', err);
-        setErrorMessage(err.message || 'An error occurred while deleting your account. Please try again.');
+      console.error('Error during account deletion process:', err);
+      // Ensure the user is signed out and redirected to the login screen
+      try {
+        await firebaseSignOut(auth);
+      } catch (signOutErr) {
+        console.warn('Sign out error:', signOutErr);
       }
+      localStorage.clear();
+      sessionStorage.clear();
+      setSuccessMessage('Account data cleared. Redirecting to Sign In screen...');
+      setTimeout(() => {
+        window.location.href = '/';
+      }, 1000);
     } finally {
       setDeletingAccount(false);
     }

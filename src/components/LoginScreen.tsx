@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { signInWithPopup, signInWithRedirect, getRedirectResult, googleProvider, auth, GoogleAuthProvider } from '../firebase';
-import { AlertCircle } from 'lucide-react';
+import { AlertCircle, ExternalLink } from 'lucide-react';
 import AnimatedHourglass from './AnimatedHourglass';
 
 interface LoginScreenProps {
@@ -47,8 +47,15 @@ export default function LoginScreen({ onSuccess }: LoginScreenProps) {
       try {
         result = await signInWithPopup(auth, googleProvider);
       } catch (popupErr: any) {
-        if (popupErr.code === 'auth/popup-blocked' || popupErr.code === 'auth/popup-closed-by-user') {
-          console.warn('Popup was blocked or closed, attempting fallback to redirect sign-in:', popupErr);
+        console.warn('Popup attempt result/error:', popupErr);
+        if (
+          popupErr.code === 'auth/popup-blocked' ||
+          popupErr.code === 'auth/popup-closed-by-user' ||
+          popupErr.code === 'auth/network-request-failed' ||
+          popupErr.code === 'auth/cancelled-popup-request' ||
+          popupErr.message?.includes('network-request-failed')
+        ) {
+          console.warn('Attempting redirect sign-in fallback due to popup or network error...');
           await signInWithRedirect(auth, googleProvider);
           return;
         }
@@ -69,10 +76,15 @@ export default function LoginScreen({ onSuccess }: LoginScreenProps) {
     } catch (err: any) {
       console.error('Google sign-in error:', err);
       setLoading(false); // Only reset loading state when an error actually occurred!
-      if (err.code === 'auth/popup-blocked') {
+      if (err.code === 'auth/network-request-failed' || err.message?.includes('network-request-failed')) {
+        setError(
+          'Network or iframe restrictions prevented popup authentication.\n\n' +
+          'Please try clicking "Continue with Google" again, or click "Open App in New Tab" below to complete sign-in.'
+        );
+      } else if (err.code === 'auth/popup-blocked') {
         setError('Sign-in popup was blocked by your browser. Please allow popups or try opening the app in a new tab.');
       } else if (err.code === 'auth/popup-closed-by-user') {
-        setError('The Google sign-in window was closed before completing authentication. Please try clicking "Continue with Google" again or open in a new tab.');
+        setError('The Google sign-in window was closed before completing authentication. Please try clicking "Continue with Google" again.');
       } else if (err.code === 'auth/operation-not-allowed') {
         setError('Google sign-in is not yet enabled in Firebase Console, or check your authDomain settings.');
       } else if (err.code === 'auth/unauthorized-domain') {
@@ -119,8 +131,16 @@ export default function LoginScreen({ onSuccess }: LoginScreenProps) {
           <div className="w-full mb-6 p-4 rounded-lg bg-ledger-coral/10 border border-ledger-coral/30 text-ledger-coral text-xs flex items-start gap-3 text-left">
             <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
             <div className="flex-1">
-              <p className="font-bold mb-1">Google Sign-in failed:</p>
-              <p className="mb-2 whitespace-pre-wrap leading-relaxed">{error}</p>
+              <p className="font-bold mb-1">Google Sign-in status:</p>
+              <p className="mb-3 whitespace-pre-wrap leading-relaxed">{error}</p>
+              <button
+                type="button"
+                onClick={() => window.open(window.location.href, '_blank')}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-ledger-coral/20 hover:bg-ledger-coral/30 text-ledger-coral font-semibold text-[11px] transition-colors cursor-pointer"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                <span>Open App in New Tab</span>
+              </button>
             </div>
           </div>
         )}

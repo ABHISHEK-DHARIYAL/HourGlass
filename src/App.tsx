@@ -432,9 +432,9 @@ export default function App() {
     const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
       setUser(firebaseUser);
       setAuthLoading(false);
+      setShowSettings(false);
       if (firebaseUser) {
         setViewMode('month');
-        setShowSettings(false);
       }
     });
     return () => unsubscribe();

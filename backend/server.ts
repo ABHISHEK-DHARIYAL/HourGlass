@@ -145,15 +145,17 @@ interface UserRecord {
 }
 
 async function updateUserDoc(userId: string, data: any, merge = true) {
-  // 1. Try Firestore
-  try {
-    const db = getDb();
-    if (db) {
-      await db.collection('users').doc(userId).set(data, { merge });
-      console.log(`Successfully synced user ${userId} to Firestore`);
+  // 1. Try Firestore if available
+  if (isFirestoreAvailable) {
+    try {
+      const db = getDb();
+      if (db) {
+        await db.collection('users').doc(userId).set(data, { merge });
+        console.log(`Successfully synced user ${userId} to Firestore`);
+      }
+    } catch (err: any) {
+      console.log(`[Firestore Fallback] updateUserDoc failed for user ${userId}, using local cache (${err.message || err}).`);
     }
-  } catch (err: any) {
-    console.log(`[Firestore Fallback] updateUserDoc failed for user ${userId}, using local cache (${err.message || err}).`);
   }
 
   // 2. Always update local users.json as fallback/cache
@@ -172,15 +174,17 @@ async function updateUserDoc(userId: string, data: any, merge = true) {
 }
 
 async function deleteUserDoc(userId: string) {
-  // 1. Try Firestore
-  try {
-    const db = getDb();
-    if (db) {
-      await db.collection('users').doc(userId).delete();
-      console.log(`Successfully deleted user ${userId} from Firestore`);
+  // 1. Try Firestore if available
+  if (isFirestoreAvailable) {
+    try {
+      const db = getDb();
+      if (db) {
+        await db.collection('users').doc(userId).delete();
+        console.log(`Successfully deleted user ${userId} from Firestore`);
+      }
+    } catch (err: any) {
+      console.log(`[Firestore Fallback] deleteUserDoc failed for user ${userId}, using local cache (${err.message || err}).`);
     }
-  } catch (err: any) {
-    console.log(`[Firestore Fallback] deleteUserDoc failed for user ${userId}, using local cache (${err.message || err}).`);
   }
 
   // 2. Local fallback delete
@@ -199,25 +203,27 @@ async function getAllUsersWithTokens(): Promise<UserRecord[]> {
   const usersList: UserRecord[] = [];
   const visitedIds = new Set<string>();
 
-  // 1. Try Firestore first
-  try {
-    const db = getDb();
-    if (db) {
-      const snapshot = await db.collection('users').get();
-      for (const doc of snapshot.docs) {
-        const data = doc.data();
-        if (data.fcmToken) {
-          usersList.push({
-            id: doc.id,
-            ...data
-          });
-          visitedIds.add(doc.id);
+  // 1. Try Firestore first if available
+  if (isFirestoreAvailable) {
+    try {
+      const db = getDb();
+      if (db) {
+        const snapshot = await db.collection('users').get();
+        for (const doc of snapshot.docs) {
+          const data = doc.data();
+          if (data.fcmToken) {
+            usersList.push({
+              id: doc.id,
+              ...data
+            });
+            visitedIds.add(doc.id);
+          }
         }
+        console.log(`Loaded ${usersList.length} users with FCM tokens from Firestore`);
       }
-      console.log(`Loaded ${usersList.length} users with FCM tokens from Firestore`);
+    } catch (err: any) {
+      console.log(`[Firestore Fallback] getAllUsersWithTokens failed, using local fallback (${err.message || err}).`);
     }
-  } catch (err: any) {
-    console.log(`[Firestore Fallback] getAllUsersWithTokens failed, using local fallback (${err.message || err}).`);
   }
 
   // 2. Fallback / Merge with local users.json
@@ -415,8 +421,9 @@ app.post('/api/delete-account', async (req, res) => {
     await deleteUserDoc(userId);
 
     // 3. Delete all user data across all Firestore collections
-    const db = getDb();
-    if (db) {
+    if (isFirestoreAvailable) {
+      const db = getDb();
+      if (db) {
       const collectionsToDelete = [
         'tasks',
         'exceptions',
@@ -447,7 +454,29 @@ app.post('/api/delete-account', async (req, res) => {
           console.error(`[API /api/delete-account] Error deleting Firestore collection "${colName}":`, colErr.message || colErr);
         }
       }
+
+      // Delete any category docs prefixed with userId
+      try {
+        const catSnapshot = await db.collection('categories').get();
+        if (!catSnapshot.empty) {
+          const batch = db.batch();
+          let count = 0;
+          catSnapshot.docs.forEach((docSnap) => {
+            if (docSnap.id.startsWith(`${userId}_`)) {
+              batch.delete(docSnap.ref);
+              count++;
+            }
+          });
+          if (count > 0) {
+            await batch.commit();
+            console.log(`[API /api/delete-account] Deleted ${count} prefixed category docs for user ${userId}`);
+          }
+        }
+      } catch (catErr: any) {
+        console.warn('[API /api/delete-account] Prefixed categories deletion note:', catErr.message || catErr);
+      }
     }
+  }
 
     // 4. Try deleting user account from Firebase Auth via Admin SDK
     try {
