@@ -2015,6 +2015,16 @@ export default function App() {
         onAddCategory={handleAddCategory}
         onUpdateCategory={handleUpdateCategory}
         onDeleteCategory={handleDeleteCategory}
+        onAccountDeleted={() => {
+          setUser(null);
+          setShowSettings(false);
+          setTasks([]);
+          setExceptions([]);
+          setCompletions([]);
+          setMustdos([]);
+          setTemplates([]);
+          setTodos([]);
+        }}
       />
     );
   }

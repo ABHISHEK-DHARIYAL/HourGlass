@@ -59,6 +59,7 @@ interface SettingsViewProps {
   onAddCategory: (name: string, color: string) => Promise<void>;
   onUpdateCategory: (id: string, name: string, color: string) => Promise<void>;
   onDeleteCategory: (id: string) => Promise<void>;
+  onAccountDeleted?: () => void;
 }
 
 export default function SettingsView({ 
@@ -69,7 +70,8 @@ export default function SettingsView({
   categories = [],
   onAddCategory,
   onUpdateCategory,
-  onDeleteCategory
+  onDeleteCategory,
+  onAccountDeleted
 }: SettingsViewProps) {
   const [pushSupported, setPushSupported] = useState(false);
   const [isSubscribed, setIsSubscribed] = useState(false);
@@ -605,10 +607,10 @@ export default function SettingsView({
         }
       }
 
-      setSuccessMessage('Your account and all associated data have been permanently deleted from Firebase. Redirecting to Google Sign-In...');
-      setTimeout(() => {
-        window.location.href = '/'; // Full page reload/redirect to index ensuring clean app state
-      }, 500);
+      setSuccessMessage('Your account and all associated data have been permanently deleted from Firebase.');
+      if (onAccountDeleted) {
+        onAccountDeleted();
+      }
 
     } catch (err: any) {
       console.error('Error during account deletion process:', err);
@@ -620,10 +622,9 @@ export default function SettingsView({
       }
       localStorage.clear();
       sessionStorage.clear();
-      setSuccessMessage('Account data cleared. Redirecting to Sign In screen...');
-      setTimeout(() => {
-        window.location.href = '/';
-      }, 1000);
+      if (onAccountDeleted) {
+        onAccountDeleted();
+      }
     } finally {
       setDeletingAccount(false);
     }
