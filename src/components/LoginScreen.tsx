@@ -180,8 +180,13 @@ export default function LoginScreen({ onSuccess }: LoginScreenProps) {
           )}
         </button>
 
-        <div className="mt-8 text-center text-[10px] text-ledger-paper-dim/60 font-mono">
-          SECURED BY FIREBASE AUTH & FIRESTORE
+        <div className="mt-8 text-center flex flex-col gap-1.5 items-center">
+          <div className="text-[10px] text-ledger-paper-dim/60 font-mono tracking-wider">
+            SECURED BY FIREBASE AUTH & FIRESTORE
+          </div>
+          <div className="text-xs text-ledger-paper-dim/80 font-sans font-medium">
+            By Abhishek.DL
+          </div>
         </div>
       </div>
     </div>

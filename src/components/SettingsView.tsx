@@ -317,10 +317,21 @@ export default function SettingsView({
   const handleSignOut = () => {
     if (user.uid === 'guest_user') {
       localStorage.removeItem('hourglass_guest_user');
-      window.location.reload();
+      if (onAccountDeleted) {
+        onAccountDeleted();
+      }
       return;
     }
-    firebaseSignOut(auth).catch(console.error);
+    console.log('auth.currentUser before signOut:', auth.currentUser);
+    firebaseSignOut(auth)
+      .then(() => {
+        console.log('signOut success');
+        console.log('auth.currentUser after signOut:', auth.currentUser);
+      })
+      .catch((err) => {
+        console.error('signOut failure:', err);
+        console.log('auth.currentUser after signOut:', auth.currentUser);
+      });
   };
 
   const handleReauthenticateAndRetry = async () => {
@@ -415,10 +426,10 @@ export default function SettingsView({
             console.warn(e);
           }
         }
-        setSuccessMessage('Guest account and all cached data have been deleted. Redirecting...');
-        setTimeout(() => {
-          window.location.reload();
-        }, 1500);
+        setSuccessMessage('Guest account and all cached data have been deleted.');
+        if (onAccountDeleted) {
+          onAccountDeleted();
+        }
       } finally {
         setDeletingAccount(false);
       }
@@ -543,25 +554,35 @@ export default function SettingsView({
       // 6. FINALLY delete Firebase Authentication user
       if (currentUser && !forceSkipAuthDelete) {
         try {
-          console.log('Attempting Firebase Auth deletion...');
+          console.log('Attempting Firebase Auth deletion for user:', currentUser.uid);
           await deleteUser(currentUser);
-          console.log('Firebase Authentication user deleted successfully.');
+          console.log('deleteUser success');
         } catch (authDeleteErr: any) {
-          if (authDeleteErr && authDeleteErr.code === 'auth/requires-recent-login') {
-            console.warn('Account deletion client note: requires recent login. Proceeding with sign-out and redirection...');
+          console.error('deleteUser failure:', authDeleteErr);
+          if (authDeleteErr && (authDeleteErr.code === 'auth/requires-recent-login' || authDeleteErr.message?.includes('requires-recent-login'))) {
+            console.warn('deleteUser failure (auth/requires-recent-login): Prompting user for re-authentication modal.');
+            setShowReauthModal(true);
+            setDeletingAccount(false);
+            return;
           } else if (authDeleteErr && (authDeleteErr.code === 'auth/user-not-found' || authDeleteErr.message?.includes('user-not-found'))) {
             console.log('User account was already deleted from Firebase Auth.');
           } else {
-            console.warn('Client auth user deletion note:', authDeleteErr);
+            setErrorMessage(authDeleteErr.message || 'Failed to delete user account from Firebase Auth.');
+            setDeletingAccount(false);
+            throw authDeleteErr;
           }
         }
       }
 
       // 7. Sign the user out from Firebase
+      console.log('auth.currentUser before signOut:', auth.currentUser);
       try {
         await firebaseSignOut(auth);
+        console.log('signOut success');
+        console.log('auth.currentUser after signOut:', auth.currentUser);
       } catch (signOutErr) {
-        console.warn('Post-deletion sign-out error (non-blocking):', signOutErr);
+        console.error('signOut failure:', signOutErr);
+        console.log('auth.currentUser after signOut:', auth.currentUser);
       }
 
       // 8. Clear Client-Side Cache, Service Workers, IndexedDB, LocalStorage, SessionStorage
@@ -614,16 +635,11 @@ export default function SettingsView({
 
     } catch (err: any) {
       console.error('Error during account deletion process:', err);
-      // Ensure the user is signed out and redirected to the login screen
-      try {
-        await firebaseSignOut(auth);
-      } catch (signOutErr) {
-        console.warn('Sign out error:', signOutErr);
-      }
-      localStorage.clear();
-      sessionStorage.clear();
-      if (onAccountDeleted) {
-        onAccountDeleted();
+      if (err?.code === 'auth/requires-recent-login' || err?.message?.includes('requires-recent-login')) {
+        console.warn('Outer catch: auth/requires-recent-login encountered. Prompting for re-authentication modal.');
+        setShowReauthModal(true);
+      } else {
+        setErrorMessage(err.message || 'An error occurred while deleting your account.');
       }
     } finally {
       setDeletingAccount(false);
@@ -1290,7 +1306,7 @@ export default function SettingsView({
                 ) : (
                   <>
                     <UserX className="w-4 h-4" />
-                    <span>Delete Account</span>
+                    <span>Delete All Data Permanently</span>
                   </>
                 )}
               </button>
@@ -1315,7 +1331,7 @@ export default function SettingsView({
               className="w-full h-11 flex items-center justify-center gap-2 text-ledger-coral/75 hover:text-ledger-coral hover:bg-ledger-coral/5 transition-all font-sans font-semibold text-xs rounded-xl cursor-pointer"
             >
               <UserX className="w-4 h-4" />
-              <span>Delete Account Permanently</span>
+              <span>Delete All Data Permanently</span>
             </button>
           </div>
         )}

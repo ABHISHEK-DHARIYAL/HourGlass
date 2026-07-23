@@ -430,6 +430,7 @@ export default function App() {
       });
 
     const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+      console.log('[onAuthStateChanged] Event fired, firebaseUser:', firebaseUser ? firebaseUser.uid : null);
       setUser(firebaseUser);
       setAuthLoading(false);
       setShowSettings(false);
@@ -2727,6 +2728,11 @@ export default function App() {
           )}
 
         </main>
+
+        {/* Footer */}
+        <footer className="w-full py-6 mt-12 border-t border-ledger-line/50 text-center text-xs text-ledger-paper-dim/80 font-sans font-medium tracking-wide">
+          By Abhishek.DL
+        </footer>
 
         {/* Floating Task Editor Modal Sheet */}
         <TaskEditorModal
