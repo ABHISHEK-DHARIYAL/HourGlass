@@ -1,0 +1,224 @@
+/* Purpose: Global Tailwind CSS imports, design tokens (dark/light theme), typography,
+   reusable component classes, and base styles for the Hourglass premium UI. */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  /* Typography — a single confident sans family for all UI text (Inter),
+     monospace reserved for numerals/time so digits read cleanly and stay
+     tabular. --font-serif is kept (many components already reference
+     `font-serif` via Tailwind) but now points at Inter so every existing
+     heading automatically drops the old journal-serif look. */
+  --font-serif: "Inter", system-ui, sans-serif;
+  --font-sans: "Inter", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+
+  /* Base surfaces */
+  --color-ledger-dark: #0a0c10;         /* app background */
+  --color-ledger-slate: #14171d;        /* card / surface level 1 */
+  --color-ledger-slate-light: #1c2028;  /* card / surface level 2 (hover, elevated) */
+  --color-ledger-slate-lighter: #262b34; /* surface level 3 (nested, popovers) */
+  --color-ledger-line: #262b34;         /* hairline borders */
+
+  /* Text */
+  --color-ledger-paper: #f2f3f5;        /* primary text */
+  --color-ledger-paper-dim: #98a0ad;    /* secondary text */
+
+  /* Accents */
+  --color-ledger-coral: #ff6a49;        /* primary accent — brand */
+  --color-ledger-gold: #eab74e;         /* secondary accent — priority / streaks */
+  --color-ledger-success: #34d399;
+  --color-ledger-danger: #f87171;
+  --color-ledger-info: #60a5fa;
+}
+
+:root.theme-paper {
+  --color-ledger-dark: #f5f6f8;          /* soft gray app background */
+  --color-ledger-slate: #ffffff;         /* card surfaces are clean white */
+  --color-ledger-slate-light: #eef0f3;   /* hover / elevated surface */
+  --color-ledger-slate-lighter: #e4e7ec; /* nested surface */
+  --color-ledger-line: #e3e6eb;
+
+  --color-ledger-paper: #14161a;
+  --color-ledger-paper-dim: #667085;
+
+  --color-ledger-coral: #d9502b;
+  --color-ledger-gold: #a97613;
+  --color-ledger-success: #14985a;
+  --color-ledger-danger: #dc4444;
+  --color-ledger-info: #2563eb;
+}
+
+/* Elevation — soft, layered shadows tuned separately per theme so dark mode
+   reads as depth (diffuse black) and light mode reads as lift (cool gray). */
+:root {
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.28), 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.34), 0 2px 6px rgba(0, 0, 0, 0.24);
+  --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.4), 0 4px 12px rgba(0, 0, 0, 0.28);
+  --shadow-glow-accent: 0 0 0 1px rgba(255, 106, 73, 0.25), 0 8px 24px rgba(255, 106, 73, 0.12);
+}
+
+:root.theme-paper {
+  --shadow-xs: 0 1px 2px rgba(16, 24, 40, 0.06);
+  --shadow-sm: 0 2px 8px rgba(16, 24, 40, 0.06), 0 1px 2px rgba(16, 24, 40, 0.05);
+  --shadow-md: 0 8px 24px rgba(16, 24, 40, 0.08), 0 2px 6px rgba(16, 24, 40, 0.05);
+  --shadow-lg: 0 16px 48px rgba(16, 24, 40, 0.12), 0 4px 12px rgba(16, 24, 40, 0.06);
+  --shadow-glow-accent: 0 0 0 1px rgba(217, 80, 43, 0.18), 0 8px 24px rgba(217, 80, 43, 0.1);
+}
+
+* {
+  border-color: var(--color-ledger-line);
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: var(--color-ledger-dark);
+  color: var(--color-ledger-paper);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  transition: background-color 0.25s ease, color 0.25s ease;
+}
+
+/* Tabular numerals wherever monospace is used for times/counters */
+.font-mono {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+/* Visible, on-brand keyboard focus */
+:focus-visible {
+  outline: 2px solid var(--color-ledger-coral);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-ledger-slate-lighter);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-ledger-coral);
+}
+
+/* Reusable surface / component primitives, built from the token system above.
+   Existing components can keep using raw utility classes — these are
+   additive helpers for newly-styled surfaces (cards, dialogs, buttons). */
+@layer components {
+  .surface-card {
+    @apply bg-ledger-slate border border-ledger-line rounded-2xl;
+    box-shadow: var(--shadow-sm);
+  }
+
+  .surface-card-hover {
+    @apply transition-all duration-200;
+  }
+  .surface-card-hover:hover {
+    box-shadow: var(--shadow-md);
+    border-color: color-mix(in srgb, var(--color-ledger-coral) 35%, var(--color-ledger-line));
+    transform: translateY(-1px);
+  }
+
+  .surface-panel {
+    @apply bg-ledger-slate-light border border-ledger-line rounded-xl;
+  }
+
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold cursor-pointer transition-all duration-150;
+    background: var(--color-ledger-coral);
+    color: #0a0c10;
+    box-shadow: var(--shadow-xs);
+  }
+  .btn-primary:hover {
+    filter: brightness(1.06);
+    box-shadow: var(--shadow-glow-accent);
+    transform: translateY(-1px);
+  }
+  .btn-primary:active {
+    transform: translateY(0);
+    filter: brightness(0.97);
+  }
+
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold cursor-pointer transition-all duration-150 bg-ledger-slate-light border border-ledger-line text-ledger-paper;
+  }
+  .btn-secondary:hover {
+    @apply border-ledger-coral text-ledger-coral;
+    background: color-mix(in srgb, var(--color-ledger-coral) 8%, var(--color-ledger-slate-light));
+  }
+
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2 text-sm font-medium cursor-pointer transition-all duration-150 text-ledger-paper-dim;
+  }
+  .btn-ghost:hover {
+    @apply text-ledger-paper bg-ledger-slate-light;
+  }
+
+  .btn-icon {
+    @apply inline-flex items-center justify-center rounded-full w-9 h-9 cursor-pointer transition-all duration-150 text-ledger-paper-dim;
+  }
+  .btn-icon:hover {
+    @apply text-ledger-paper bg-ledger-slate-light;
+  }
+
+  .input-base {
+    @apply w-full rounded-xl px-3.5 py-2.5 text-sm bg-ledger-slate-light border border-ledger-line text-ledger-paper placeholder-ledger-paper-dim/60 transition-colors duration-150 outline-none;
+  }
+  .input-base:focus {
+    border-color: var(--color-ledger-coral);
+  }
+
+  .dialog-overlay {
+    @apply fixed inset-0 z-50 flex items-center justify-center p-4;
+    background: color-mix(in srgb, black 55%, transparent);
+    backdrop-filter: blur(6px);
+  }
+
+  .dialog-panel {
+    @apply bg-ledger-slate border border-ledger-line rounded-3xl w-full;
+    box-shadow: var(--shadow-lg);
+  }
+
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold bg-ledger-slate-light border border-ledger-line text-ledger-paper-dim;
+  }
+}
+
+/* Page-transition & ambient motion keyframes */
+@keyframes hg-fade-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-up {
+  animation: hg-fade-up 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes hg-shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.animate-shimmer {
+  background-image: linear-gradient(90deg, transparent, rgba(255,255,255,0.06), transparent);
+  background-size: 200% 100%;
+  animation: hg-shimmer 1.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
