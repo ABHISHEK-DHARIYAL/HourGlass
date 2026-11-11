@@ -1,0 +1,45 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isDataOwner() {
+      return isAuthenticated() && (resource == null || !('userId' in resource.data) || resource.data.userId == request.auth.uid);
+    }
+
+    function isNewDataOwner() {
+      return isAuthenticated() && request.resource.data.userId == request.auth.uid;
+    }
+
+    // User root document and subcollections
+    match /users/{userId} {
+      allow read, write: if isOwner(userId);
+
+      // User subcollections (e.g. tasks, todos, habits, completions, etc.)
+      match /{collectionName}/{docId} {
+        allow read: if isOwner(userId) && (resource == null || resource.data.userId == request.auth.uid);
+        allow create: if isOwner(userId) && isNewDataOwner();
+        allow update: if isOwner(userId) && isDataOwner() && isNewDataOwner();
+        allow delete: if isOwner(userId) && (resource == null || isDataOwner());
+      }
+
+      match /{allPaths=**} {
+        allow read, write: if isOwner(userId);
+      }
+    }
+
+    // Top-level collections fallback for user-owned documents
+    match /{collectionName}/{docId} {
+      allow create: if isAuthenticated() && isNewDataOwner();
+      allow read, delete: if isAuthenticated() && isDataOwner();
+      allow update: if isAuthenticated() && isDataOwner() && isNewDataOwner();
+    }
+  }
+}
