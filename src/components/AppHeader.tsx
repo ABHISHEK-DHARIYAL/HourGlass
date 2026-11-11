@@ -1,6 +1,6 @@
 // Purpose: Main top navigation header for Hourglass app with sync indicators and settings triggers
 
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { User } from '../firebase';
 import { 
   Hourglass, 
@@ -12,6 +12,7 @@ import {
   Sparkles,
   RefreshCw
 } from 'lucide-react';
+import { AnimatePresence, motion } from 'framer-motion';
 import { SyncStatus } from '../utils/offlineSyncManager';
 
 interface AppHeaderProps {
@@ -24,6 +25,7 @@ interface AppHeaderProps {
   onOpenSearch: () => void;
   onRefreshQuote?: () => void;
   isRefreshingQuote?: boolean;
+  onQuoteHoverChange?: (hovering: boolean) => void;
 }
 
 export default function AppHeader({
@@ -36,9 +38,23 @@ export default function AppHeader({
   onOpenSearch,
   onRefreshQuote,
   isRefreshingQuote = false,
+  onQuoteHoverChange,
 }: AppHeaderProps) {
+  // The header's height now changes with the quote length, so publish it as a
+  // CSS variable for the sticky navigation bar to sit directly beneath it.
+  const headerRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    const el = headerRef.current;
+    if (!el) return;
+    const update = () => document.documentElement.style.setProperty('--hg-header-h', `${el.offsetHeight}px`);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   return (
-    <header className="w-full bg-ledger-slate/95 backdrop-blur-md border-b border-ledger-line sticky top-0 z-40" style={{ boxShadow: "var(--shadow-xs)" }}>
+    <header ref={headerRef} className="w-full bg-ledger-slate/95 backdrop-blur-md border-b border-ledger-line sticky top-0 z-40" style={{ boxShadow: "var(--shadow-xs)" }}>
       <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <div className="p-2.5 rounded-2xl bg-ledger-coral/12 text-ledger-coral">
@@ -61,25 +77,43 @@ export default function AppHeader({
         </div>
 
         {quote.text && (
-          <div className="hidden md:flex items-center gap-2 max-w-sm text-center px-3 py-1.5 rounded-full bg-ledger-slate-light border border-ledger-line">
-            <Sparkles className="w-3.5 h-3.5 text-ledger-gold shrink-0" />
-            <div className="flex flex-col text-left overflow-hidden">
-              <p className="text-[11px] italic text-ledger-paper-dim line-clamp-1">
-                "{quote.text}"
-              </p>
-              <span className="font-mono text-[9px] text-ledger-paper-dim/60 font-semibold uppercase tracking-wider">
-                — {quote.author}
-              </span>
+          <div
+            className="hidden md:flex items-center gap-3 flex-1 min-w-0 max-w-xl px-4 py-2 rounded-2xl bg-ledger-slate-light border border-ledger-line"
+            onMouseEnter={() => onQuoteHoverChange?.(true)}
+            onMouseLeave={() => onQuoteHoverChange?.(false)}
+            onFocus={() => onQuoteHoverChange?.(true)}
+            onBlur={() => onQuoteHoverChange?.(false)}
+          >
+            <Sparkles className="w-4 h-4 text-ledger-gold shrink-0" />
+            <div className="flex-1 min-w-0" aria-live="polite">
+              <AnimatePresence mode="wait" initial={false}>
+                <motion.div
+                  key={quote.text}
+                  initial={{ opacity: 0, y: 4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -4 }}
+                  transition={{ duration: 0.25 }}
+                  className="text-left"
+                >
+                  <p className="text-xs italic leading-snug text-ledger-paper-dim break-words">
+                    “{quote.text}”
+                  </p>
+                  <span className="block mt-0.5 text-[11px] font-semibold text-ledger-paper-dim/70">
+                    — {quote.author}
+                  </span>
+                </motion.div>
+              </AnimatePresence>
             </div>
             {onRefreshQuote && (
               <button
                 onClick={onRefreshQuote}
                 disabled={isRefreshingQuote}
                 id="header-refresh-quote-button"
-                className="p-1 rounded-md text-ledger-paper-dim hover:text-ledger-gold transition-colors cursor-pointer shrink-0"
-                title="Get New Random Quote"
+                className="p-1.5 rounded-md text-ledger-paper-dim hover:text-ledger-gold transition-colors cursor-pointer shrink-0"
+                title="Show another quote"
+                aria-label="Show another quote"
               >
-                <RefreshCw className={`w-3 h-3 ${isRefreshingQuote ? 'animate-spin' : ''}`} />
+                <RefreshCw className={`w-3.5 h-3.5 ${isRefreshingQuote ? 'animate-spin' : ''}`} />
               </button>
             )}
           </div>
@@ -135,22 +169,32 @@ export default function AppHeader({
 
       {/* Mobile Quote Bar: Visible on smaller screens (< md) */}
       {quote.text && (
-        <div className="md:hidden border-t border-ledger-line bg-ledger-slate-light/60 px-4 py-1.5 flex items-center justify-between text-xs gap-2">
-          <div className="flex items-center gap-2 overflow-hidden">
-            <Sparkles className="w-3 h-3 text-ledger-gold shrink-0" />
-            <p className="text-[10px] italic text-ledger-paper-dim truncate">
-              "{quote.text}" <span className="font-mono text-[9px] not-italic text-ledger-paper-dim/60">— {quote.author}</span>
-            </p>
+        <div className="md:hidden border-t border-ledger-line bg-ledger-slate-light/60 px-4 py-2 flex items-start justify-between gap-2">
+          <Sparkles className="w-3.5 h-3.5 text-ledger-gold shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0" aria-live="polite">
+            <AnimatePresence mode="wait" initial={false}>
+              <motion.p
+                key={quote.text}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.25 }}
+                className="text-[11px] italic leading-snug text-ledger-paper-dim break-words"
+              >
+                “{quote.text}” <span className="not-italic font-semibold text-ledger-paper-dim/70">— {quote.author}</span>
+              </motion.p>
+            </AnimatePresence>
           </div>
           {onRefreshQuote && (
             <button
               onClick={onRefreshQuote}
               disabled={isRefreshingQuote}
               id="mobile-refresh-quote-button"
-              className="p-1 text-ledger-paper-dim hover:text-ledger-gold transition-colors shrink-0"
-              title="Get New Random Quote"
+              className="p-1 text-ledger-paper-dim hover:text-ledger-gold transition-colors shrink-0 cursor-pointer"
+              title="Show another quote"
+              aria-label="Show another quote"
             >
-              <RefreshCw className={`w-3 h-3 ${isRefreshingQuote ? 'animate-spin' : ''}`} />
+              <RefreshCw className={`w-3.5 h-3.5 ${isRefreshingQuote ? 'animate-spin' : ''}`} />
             </button>
           )}
         </div>

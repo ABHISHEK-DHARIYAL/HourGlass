@@ -179,11 +179,6 @@ googleProvider.setCustomParameters({
   prompt: 'select_account'
 });
 
-export const gcalProvider = new GoogleAuthProvider();
-gcalProvider.setCustomParameters({
-  prompt: 'consent'
-});
-
 export enum OperationType {
   CREATE = 'create',
   UPDATE = 'update',

@@ -1,6 +1,6 @@
 // Purpose: Global search dialog allowing search across tasks, todos, and habits
 
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Task, TodoItem, Habit, Note } from '../types';
 import { Search, X, Clock, CheckSquare, Calendar, ArrowRight, StickyNote } from 'lucide-react';
 
@@ -31,6 +31,16 @@ export default function GlobalSearchModal({
   onSelectTask,
   onSelectDate,
 }: GlobalSearchModalProps) {
+  // Close on Escape key (hook must run before the early return below)
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   const query = searchQuery.trim().toLowerCase();
@@ -54,25 +64,31 @@ export default function GlobalSearchModal({
   const hasResults = matchingTasks.length > 0 || matchingTodos.length > 0 || matchingHabits.length > 0 || matchingNotes.length > 0;
 
   return (
-    <div className="dialog-overlay items-start pt-20">
+    <div
+      className="dialog-overlay items-start pt-20"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
       <div className="dialog-panel max-w-lg w-full p-5 flex flex-col gap-4 relative max-h-[80vh] animate-fade-up">
-        <button
-          onClick={onClose}
-          className="absolute top-4 right-4 btn-icon !w-8 !h-8"
-        >
-          <X className="w-5 h-5" />
-        </button>
-
-        <div className="relative">
-          <Search className="w-5 h-5 text-ledger-gold absolute left-3.5 top-3" />
-          <input
-            type="text"
-            autoFocus
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search tasks, todos, habits, or notes..."
-            className="input-base w-full h-12 pl-11 pr-4 text-sm"
-          />
+        <div className="flex items-center gap-2">
+          <div className="relative flex-1">
+            <Search className="w-5 h-5 text-ledger-gold absolute left-3.5 top-3.5 pointer-events-none" />
+            <input
+              type="text"
+              autoFocus
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search tasks, todos, habits, or notes..."
+              className="input-base w-full h-12 pl-11 pr-4 text-sm"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close search"
+            className="btn-icon !w-10 !h-10 shrink-0"
+          >
+            <X className="w-5 h-5" />
+          </button>
         </div>
 
         <div className="flex-1 overflow-y-auto pr-1 flex flex-col gap-4">

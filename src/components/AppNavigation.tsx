@@ -31,7 +31,7 @@ export default function AppNavigation({ viewMode, setViewMode }: AppNavigationPr
   ] as const;
 
   return (
-    <nav className="w-full bg-ledger-dark/70 backdrop-blur-sm border-b border-ledger-line px-4 py-2.5 overflow-x-auto no-scrollbar sticky top-[57px] z-30">
+    <nav className="w-full bg-ledger-dark/70 backdrop-blur-sm border-b border-ledger-line px-4 py-2.5 overflow-x-auto no-scrollbar sticky top-[var(--hg-header-h,57px)] z-30">
       <div className="max-w-7xl mx-auto flex items-center justify-start md:justify-center gap-1 min-w-max">
         {tabs.map((tab) => {
           const Icon = tab.icon;

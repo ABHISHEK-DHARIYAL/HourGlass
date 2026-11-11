@@ -41,7 +41,6 @@ import TodoListPage from './components/TodoListPage';
 import NotesView from './components/NotesView';
 import { useNoteActions } from './hooks/useNoteActions';
 import TaskTemplateSection from './components/TaskTemplateSection';
-import GCalSyncButton from './components/GCalSyncButton';
 import DailyReflectionSection from './components/DailyReflectionSection';
 import TaskEditorModal from './components/TaskEditorModal';
 import RewardConfetti from './components/RewardConfetti';
@@ -49,6 +48,7 @@ import AnimatedHourglass from './components/AnimatedHourglass';
 import { Copy, Calendar, Clock, ListTodo, CheckSquare, ArrowRight, Target, Settings, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { messaging, onMessage } from './firebase';
+import { pickFallbackQuote } from './data/quotes';
 
 // Root application component: wires together the data hooks (tasks,
 // notifications, actions), owns top-level UI state (view mode, theme,
@@ -136,10 +136,31 @@ export default function App() {
     setIsRefreshingQuote(true);
     fetch('/api/quote?random=true')
       .then(res => res.ok ? res.json() : null)
-      .then(data => { if (data?.text && data?.author) setQuote(data); })
-      .catch(() => {})
+      .then(data => {
+        if (data?.text && data?.author) {
+          // The API can hand back the quote already on screen; skip those so a refresh always changes it.
+          setQuote(prev => data.text === prev.text ? pickFallbackQuote(prev.text) : data);
+        } else {
+          setQuote(prev => pickFallbackQuote(prev.text));
+        }
+      })
+      .catch(() => setQuote(prev => pickFallbackQuote(prev.text)))
       .finally(() => setIsRefreshingQuote(false));
   }, []);
+
+  // Rotates the header quote automatically. The timer restarts whenever the
+  // quote changes (so a manual refresh also resets it), pauses while the
+  // pointer is over the quote so it can be read, and is skipped while the
+  // tab is hidden.
+  const [isQuotePaused, setIsQuotePaused] = useState(false);
+  useEffect(() => {
+    if (isQuotePaused) return;
+    const timer = window.setTimeout(() => {
+      if (document.visibilityState === 'visible') handleRefreshQuote();
+      else setQuote(prev => ({ ...prev }));
+    }, 30000);
+    return () => window.clearTimeout(timer);
+  }, [quote, isQuotePaused, handleRefreshQuote]);
   const [searchQuery, setSearchQuery] = useState('');
   const [focusMode, setFocusMode] = useState<boolean>(() => localStorage.getItem('hourglass_focus_mode') === 'true');
   const [theme, setTheme] = useState<'dark' | 'paper'>(() => (localStorage.getItem('hourglass_theme') === 'paper' ? 'paper' : 'dark'));
@@ -348,6 +369,7 @@ export default function App() {
         onOpenSearch={() => setIsSearchOpen(true)}
         onRefreshQuote={handleRefreshQuote}
         isRefreshingQuote={isRefreshingQuote}
+        onQuoteHoverChange={setIsQuotePaused}
       />
 
       <AppNavigation viewMode={viewMode} setViewMode={setViewMode} />
@@ -495,7 +517,6 @@ export default function App() {
                   }}
                   onDeleteTemplate={handleDeleteTemplate}
                 />
-                <GCalSyncButton userId={user.uid} selectedDateStr={selectedDateStr} tasks={tasks} onImportEvent={handleImportTask} onImportComplete={() => {}} />
                 <DailyReflectionSection selectedDateStr={selectedDateStr} reflections={reflections} onSaveReflection={handleSaveReflection} />
               </>
             )}
@@ -510,7 +531,7 @@ export default function App() {
 
       <GlobalSearchModal
         isOpen={isSearchOpen}
-        onClose={() => setIsSearchOpen(false)}
+        onClose={() => { setIsSearchOpen(false); setSearchQuery(''); }}
         searchQuery={searchQuery}
         setSearchQuery={setSearchQuery}
         tasks={tasks}
