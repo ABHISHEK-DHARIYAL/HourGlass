@@ -1,9 +1,20 @@
 // Purpose: Shared helpers for the AI Coach API — typed errors, Firebase ID-token auth,
 // and a per-user daily quota so one account can't burn through the Gemini key.
 
-import type { Request } from 'firebase-functions/v2/https';
 import { getAuth } from 'firebase-admin/auth';
-import { getDb } from '../db';
+import { getDb } from '../db.js';
+
+// Minimal request/response shapes so the same code runs on Firebase Functions and Vercel.
+export interface ReqLike {
+  method?: string;
+  path?: string;
+  headers: Record<string, string | string[] | undefined>;
+  body?: any;
+}
+export interface ResLike {
+  status(code: number): ResLike;
+  json(body: unknown): unknown;
+}
 
 export class HttpError extends Error {
   constructor(public status: number, message: string) {
@@ -17,8 +28,8 @@ export interface AuthedUser {
 }
 
 // Verifies the "Authorization: Bearer <Firebase ID token>" header sent by the frontend.
-export async function requireUser(req: Request): Promise<AuthedUser> {
-  const match = /^Bearer (.+)$/.exec(req.headers.authorization || '');
+export async function requireUser(req: ReqLike): Promise<AuthedUser> {
+  const match = /^Bearer (.+)$/.exec(String(req.headers.authorization || ''));
   if (!match) throw new HttpError(401, 'Please sign in to use AI Coach.');
   try {
     const decoded = await getAuth().verifyIdToken(match[1]);

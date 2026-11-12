@@ -8,11 +8,14 @@
 // Firestore is always available here, so all local-JSON-cache fallback
 // logic from the old backend/db.ts has been dropped as unnecessary.
 
+import { getApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 
 // Returns the Admin SDK Firestore instance for the default database.
+// Set FIREBASE_DATABASE_ID only if your Firestore database is not "(default)".
 export function getDb() {
-  return getFirestore();
+  const id = process.env.FIREBASE_DATABASE_ID;
+  return id && id !== '(default)' ? getFirestore(getApp(), id) : getFirestore();
 }
 
 export interface UserRecord {

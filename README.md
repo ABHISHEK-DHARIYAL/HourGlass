@@ -47,3 +47,19 @@ Deploy: `npm run build && firebase deploy`.
 2. OAuth consent screen → add yourself as a test user.
 3. Credentials → OAuth client ID → *Web application* → add `http://localhost:5173` and your hosted URL under **Authorized JavaScript origins**.
 4. Put the client ID in `VITE_GOOGLE_CLIENT_ID`.
+
+### Deploy the AI Coach backend on Vercel (alternative to Firebase Functions)
+The same backend code is also exposed as `api/coach/[action].ts`. Add these **server-side** variables in
+Vercel → Settings → Environment Variables (no `VITE_` prefix):
+
+| Variable | Needed? | Value |
+|---|---|---|
+| `GEMINI_API_KEY` | **required** | your Gemini key |
+| `GEMINI_MODEL` | optional | `gemini-3.8-flash` |
+| `FIREBASE_SERVICE_ACCOUNT` | **required** | full JSON of a service-account key (Firebase Console → Project settings → Service accounts → Generate new private key) |
+| `FIREBASE_DATABASE_ID` | only if not `(default)` | same as `VITE_FIREBASE_DATABASE_ID` |
+| `COACH_DAILY_LIMIT` | optional | `80` |
+| `SMTP_HOST/PORT/USER/PASS`, `MAIL_FROM` | optional | email feature |
+| `CRON_SECRET` | only for daily email | any long random string |
+
+Redeploy after adding variables. `vercel.json` sets a 60 s limit and a daily cron (`/api/coach/digest`).

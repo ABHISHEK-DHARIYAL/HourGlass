@@ -30,8 +30,10 @@
     "@tiptap/suggestion": "^2.11.5",
     "@vitejs/plugin-react": "^5.0.4",
     "firebase": "^12.16.0",
+    "firebase-admin": "^14.1.0",
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
+    "nodemailer": "^6.9.16",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
     "tiptap-markdown": "^0.8.10",
@@ -39,6 +41,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
+    "@types/nodemailer": "^6.4.17",
     "autoprefixer": "^10.4.21",
     "firebase-tools": "^13.29.0",
     "tailwindcss": "^4.1.14",

@@ -3,8 +3,7 @@
 
 import nodemailer from 'nodemailer';
 import { getAuth } from 'firebase-admin/auth';
-import { logger } from 'firebase-functions';
-import { getDb } from '../db';
+import { getDb } from '../db.js';
 
 export interface MailItem {
   date: string;
@@ -74,7 +73,7 @@ export async function sendDailyDigests(): Promise<void> {
       }).formatToParts(new Date());
       const get = (t: string) => parts.find((p) => p.type === t)?.value || '';
       const today = `${get('year')}-${get('month')}-${get('day')}`;
-      if (Number(get('hour')) !== wantedHour || pref.lastSent === today) continue;
+      if (Number(get('hour')) < wantedHour || pref.lastSent === today) continue;
 
       const courses = await userDoc.ref.collection('coach_courses').get();
       const items: MailItem[] = [];
@@ -96,7 +95,7 @@ export async function sendDailyDigests(): Promise<void> {
       await sendMail(email, `Today's learning plan — ${courseName}`, scheduleHtml(courseName, 'Here is what is planned for you today:', items));
       await userDoc.ref.set({ coachEmail: { lastSent: today } }, { merge: true });
     } catch (err) {
-      logger.error(`Coach digest failed for ${userDoc.id}`, err);
+      console.error(`Coach digest failed for ${userDoc.id}`, err);
     }
   }
 }

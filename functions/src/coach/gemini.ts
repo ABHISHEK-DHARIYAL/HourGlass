@@ -1,7 +1,7 @@
 // Purpose: Thin Gemini REST client (no SDK needed). The API key lives ONLY in the
 // backend env (functions/.env -> GEMINI_API_KEY) and is never sent to the browser.
 
-import { HttpError } from './http';
+import { HttpError } from './http.js';
 
 export interface ChatMessage {
   role: 'user' | 'model';

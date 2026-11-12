@@ -1,0 +1,8 @@
+{
+  "functions": {
+    "api/coach/[action].ts": { "maxDuration": 60 }
+  },
+  "crons": [
+    { "path": "/api/coach/digest", "schedule": "30 1 * * *" }
+  ]
+}

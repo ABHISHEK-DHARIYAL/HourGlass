@@ -1,12 +1,9 @@
 // Purpose: AI Coach API — one HTTP function routed as /api/coach/<action>.
 // Actions: roadmap, notes, quiz, chat (Gemini) and email-schedule (SMTP).
 
-import type { Request } from 'firebase-functions/v2/https';
-import type { Response } from 'express';
-import { logger } from 'firebase-functions';
-import { generate, parseJson, ChatMessage } from './gemini';
-import { HttpError, requireUser, consumeQuota } from './http';
-import { emailConfigured, sendMail, scheduleHtml, MailItem } from './email';
+import { generate, parseJson, ChatMessage } from './gemini.js';
+import { HttpError, requireUser, consumeQuota, ReqLike, ResLike } from './http.js';
+import { emailConfigured, sendMail, scheduleHtml, MailItem } from './email.js';
 
 const LEVELS = ['Beginner', 'Intermediate', 'Advanced'] as const;
 const text = (v: unknown, max: number) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
@@ -117,10 +114,10 @@ async function emailSchedule(body: any, email?: string) {
   return { success: true };
 }
 
-export async function handleCoach(req: Request, res: Response): Promise<void> {
+export async function handleCoach(req: ReqLike, res: ResLike, actionOverride?: string): Promise<void> {
   try {
     if (req.method !== 'POST') throw new HttpError(405, 'Use POST.');
-    const action = req.path.split('/').filter(Boolean).pop();
+    const action = actionOverride || (req.path || '').split('/').filter(Boolean).pop();
     const user = await requireUser(req);
     const body = req.body || {};
 
@@ -135,7 +132,7 @@ export async function handleCoach(req: Request, res: Response): Promise<void> {
     res.json(await fn(body));
   } catch (err: any) {
     const status = err instanceof HttpError ? err.status : 500;
-    if (status >= 500) logger.error('AI Coach error:', err);
+    if (status >= 500) console.error('AI Coach error:', err);
     res.status(status).json({ error: err?.message || 'Something went wrong.' });
   }
 }
