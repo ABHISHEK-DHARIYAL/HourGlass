@@ -173,3 +173,69 @@ export interface Note {
   createdAt: string;
   updatedAt: string;
 }
+
+
+// ---- AI Coach ----
+
+export type CoachLevel = 'Beginner' | 'Intermediate' | 'Advanced';
+
+export interface CoachTopic {
+  id: string; // t1, t2, ...
+  title: string;
+  summary: string;
+  level: CoachLevel;
+  estMinutes: number;
+}
+
+export interface CoachScheduleItem {
+  topicId: string;
+  date: string; // YYYY-MM-DD
+  startHour: number; // 0–23
+  endHour: number; // 0–23
+}
+
+export interface CoachCourse {
+  id: string;
+  userId: string;
+  topic: string; // what the learner typed, e.g. "React"
+  title: string; // AI-polished roadmap title
+  goal?: string;
+  level: CoachLevel; // learner's starting level
+  topics: CoachTopic[];
+  schedule: CoachScheduleItem[];
+  hoursPerDay: number;
+  preferredHour: number;
+  studyDays: number[]; // 0 = Sunday ... 6 = Saturday
+  startDate: string; // YYYY-MM-DD
+  emailAlerts: boolean;
+  plannerSynced?: boolean;
+  calendarSynced?: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CoachNote {
+  id: string; // `${courseId}_${topicId}`
+  userId: string;
+  courseId: string;
+  topicId: string;
+  markdown: string;
+  createdAt: string;
+}
+
+export interface CoachQuizQuestion {
+  question: string;
+  options: string[];
+  answerIndex: number;
+  explanation: string;
+}
+
+export interface CoachAttempt {
+  id: string;
+  userId: string;
+  courseId: string;
+  topicId: string;
+  score: number;
+  total: number;
+  createdAt: string;
+}

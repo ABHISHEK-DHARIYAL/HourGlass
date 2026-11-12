@@ -23,6 +23,8 @@ import {
   clearUserFcmToken
 } from './db';
 import { INSPIRATIONAL_QUOTES, checkAndSendNotifications } from './notifications';
+import { handleCoach } from './coach/coach';
+import { sendDailyDigests } from './coach/email';
 
 initializeApp();
 
@@ -216,7 +218,12 @@ export const deleteAccount = onRequest({ region: REGION, cors: true }, async (re
       'subscriptions',
       'categories',
       'habits',
-      'habit_history'
+      'habit_history',
+      'notes',
+      'coach_courses',
+      'coach_notes',
+      'coach_attempts',
+      'coach_usage'
     ];
 
     for (const colName of collectionsToDelete) {
@@ -255,6 +262,25 @@ export const scheduledNotifications = onSchedule(
       await checkAndSendNotifications();
     } catch (err) {
       logger.error('checkAndSendNotifications failed:', err);
+    }
+  }
+);
+
+// POST /api/coach/<roadmap|notes|quiz|chat|email-schedule> — AI Coach (Gemini + SMTP).
+// Hosting caps rewritten requests at 60s, so keep the function timeout at or under that.
+export const coachApi = onRequest(
+  { region: REGION, cors: true, timeoutSeconds: 60, memory: '512MiB' },
+  handleCoach
+);
+
+// Hourly: email opted-in users their lessons for today at their chosen local hour.
+export const scheduledCoachEmails = onSchedule(
+  { schedule: 'every 60 minutes', region: REGION, timeoutSeconds: 300 },
+  async () => {
+    try {
+      await sendDailyDigests();
+    } catch (err) {
+      logger.error('sendDailyDigests failed:', err);
     }
   }
 );

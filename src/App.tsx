@@ -39,6 +39,7 @@ import HabitTrackerSection from './components/HabitTrackerSection';
 import DayTimelineView from './components/DayTimelineView';
 import TodoListPage from './components/TodoListPage';
 import NotesView from './components/NotesView';
+import CoachView from './components/CoachView';
 import { useNoteActions } from './hooks/useNoteActions';
 import TaskTemplateSection from './components/TaskTemplateSection';
 import DailyReflectionSection from './components/DailyReflectionSection';
@@ -414,7 +415,7 @@ export default function App() {
               />
             )}
 
-            {viewMode !== 'month' && viewMode !== 'todos' && viewMode !== 'notes' && (
+            {viewMode !== 'month' && viewMode !== 'todos' && viewMode !== 'notes' && viewMode !== 'coach' && (
               <>
                 <GlanceView
                   userId={user.uid}
@@ -483,6 +484,13 @@ export default function App() {
               />
             )}
 
+            {viewMode === 'coach' && (
+              <CoachView
+                userId={user.uid}
+                onAddTasks={async (list) => { for (const t of list) await handleImportTask(t); }}
+              />
+            )}
+
             {viewMode === 'todos' && (
               <TodoListPage
                 userId={user.uid}
@@ -494,7 +502,7 @@ export default function App() {
               />
             )}
 
-            {viewMode !== 'month' && viewMode !== 'todos' && viewMode !== 'notes' && (
+            {viewMode !== 'month' && viewMode !== 'todos' && viewMode !== 'notes' && viewMode !== 'coach' && (
               <div className="flex gap-2.5">
                 <button onClick={() => setShowCopyDayDialog(true)} className="btn-secondary flex-1 h-10 text-xs">
                   <Copy className="w-4 h-4" /> Duplicate Day Blocks
@@ -505,7 +513,7 @@ export default function App() {
               </div>
             )}
 
-            {viewMode !== 'month' && viewMode !== 'todos' && viewMode !== 'notes' && (
+            {viewMode !== 'month' && viewMode !== 'todos' && viewMode !== 'notes' && viewMode !== 'coach' && (
               <>
                 <TaskTemplateSection
                   userId={user.uid}

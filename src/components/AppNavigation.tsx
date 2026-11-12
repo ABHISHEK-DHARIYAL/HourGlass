@@ -8,11 +8,12 @@ import {
   ListTodo, 
   LineChart, 
   Target,
-  StickyNote
+  StickyNote,
+  GraduationCap
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 
-export type ViewMode = 'both' | 'month' | 'day' | 'review' | 'clock' | 'todos' | 'notes';
+export type ViewMode = 'both' | 'month' | 'day' | 'review' | 'clock' | 'todos' | 'notes' | 'coach';
 
 interface AppNavigationProps {
   viewMode: ViewMode;
@@ -26,6 +27,7 @@ export default function AppNavigation({ viewMode, setViewMode }: AppNavigationPr
     { id: 'day', label: 'Day Timeline', icon: Clock },
     { id: 'todos', label: 'Inbox', icon: ListTodo },
     { id: 'notes', label: 'Notes', icon: StickyNote },
+    { id: 'coach', label: 'AI Coach', icon: GraduationCap },
     { id: 'review', label: 'Statistics', icon: LineChart },
     { id: 'clock', label: 'Timer', icon: Target },
   ] as const;

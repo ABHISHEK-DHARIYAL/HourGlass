@@ -10,6 +10,7 @@
       { "source": "/api/notification-settings", "function": "notificationSettings" },
       { "source": "/api/clear-fcm-token", "function": "clearFcmToken" },
       { "source": "/api/delete-account", "function": "deleteAccount" },
+      { "source": "/api/coach/**", "function": "coachApi" },
       { "source": "**", "destination": "/index.html" }
     ],
     "headers": [
